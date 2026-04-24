@@ -76,7 +76,7 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     url: 'https://handoff.lifespace.com',
     personalEnvVar: 'HANDOFF_ADMIN_API_KEY',
     repoDir: 'Handoff',
-    deployed: false,
+    deployed: true,
   },
 };
 
