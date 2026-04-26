@@ -11,7 +11,8 @@ export type ServiceId =
   | 'library'
   | 'tenant'
   | 'trust'
-  | 'handoff';
+  | 'handoff'
+  | 'promote';
 
 export interface ServiceConfig {
   url: string;
@@ -76,6 +77,12 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     url: 'https://handoff.lifespace.com',
     personalEnvVar: 'HANDOFF_ADMIN_API_KEY',
     repoDir: 'Handoff',
+    deployed: true,
+  },
+  promote: {
+    url: 'https://promote.lifespace.com',
+    personalEnvVar: 'PROMOTE_ADMIN_API_KEY',
+    repoDir: 'Promote',
     deployed: true,
   },
 };
