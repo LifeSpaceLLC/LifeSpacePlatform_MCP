@@ -34,13 +34,38 @@ export const tools: ToolDef[] = [
           },
         },
       },
-      required: ['repo_url', 'branch', 'recipient', 'intent'],
+      required: ['repo_url', 'branch', 'intent'],
+    },
+  },
+  {
+    name: 'lsp_handoff_create',
+    description:
+      "Create a handoff packet. Call after composing and getting user approval. Recipient is optional — omit for share-link-only mode ('generate handoff'). Returns the created packet with id.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo_url: { type: 'string', description: 'Git remote URL' },
+        branch: { type: 'string', description: 'Branch name' },
+        head_commit_sha: { type: 'string', description: 'HEAD commit SHA (optional)' },
+        title: { type: 'string', description: 'One-sentence title' },
+        summary_md: { type: 'string', description: 'Markdown summary of what was done and why' },
+        changed_files: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, change_type: { type: 'string' }, note: { type: 'string' } }, required: ['path', 'change_type'] } },
+        acceptance_criteria: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, text: { type: 'string' } }, required: ['id', 'text'] } },
+        open_questions_md: { type: 'string' },
+        intent: { type: 'string', enum: ['continue', 'finish_and_ship', 'review_and_merge', 'fresh_session', 'discontinue_and_postmortem'] },
+        recipient_type: { type: 'string', enum: ['user', 'agent'], description: 'Omit for share-link-only (no email)' },
+        recipient_email: { type: 'string', description: 'Recipient email. Omit for share-link-only.' },
+        recipient_user_email: { type: 'string' },
+        recipient_agent_tenant_id: { type: 'string' },
+        context_refs: { type: 'array', items: { type: 'object', properties: { module: { type: 'string' }, ref_id: { type: 'string' }, label: { type: 'string' } }, required: ['module', 'ref_id'] } },
+      },
+      required: ['repo_url', 'branch', 'title', 'summary_md', 'intent'],
     },
   },
   {
     name: 'lsp_handoff_send',
     description:
-      "Transition a drafted handoff packet to 'sent', triggering Dispatch notification + share link generation (if external recipient).",
+      "Transition a drafted handoff packet to 'sent'. ALWAYS returns a share_url (public, 7-day, no login required). If a recipient is set, also sends a Dispatch email. The share_url in the response MUST be shown to the user — it is the product.",
     inputSchema: {
       type: 'object',
       properties: { packet_id: { type: 'string' } },
@@ -80,6 +105,7 @@ export const tools: ToolDef[] = [
 
 export const handlers: Record<string, ToolHandler> = {
   lsp_handoff_compose: async (args) => okText(await call('handoff', '/v1/packets/compose', 'POST', args)),
+  lsp_handoff_create: async (args) => okText(await call('handoff', '/v1/packets', 'POST', args)),
   lsp_handoff_send: async (args) => {
     const { packet_id } = args as { packet_id: string };
     return okText(await call('handoff', `/v1/packets/${packet_id}/send`, 'POST'));

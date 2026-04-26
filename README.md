@@ -46,31 +46,27 @@ Other services (Memory, Knowledge, Projects, Library, Tenant, Trust) store their
 
 Handoff always fails with "not yet deployed" until its Railway service goes live.
 
-## Install at user scope
+## Install (project-scoped)
 
-Add to `~/.claude/settings.json`:
+MCP config is **project-scoped** via `.mcp.json` at the project root — NOT `~/.claude/settings.json`. This prevents cross-tenant stomping when multiple clients share the same machine.
 
-```json
-{
-  "mcpServers": {
-    "lsp": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/LifeSpacePlatform/MCP/dist/server.js"],
-      "env": {
-        "LSP_REPO_PATH": "/ABSOLUTE/PATH/TO/LifeSpacePlatform"
-      }
-    }
-  }
-}
+### Local dev mode (for LifeSpacePlatform repo)
+
+```bash
+claude mcp add lsp --scope project -e LSP_REPO_PATH="/ABSOLUTE/PATH/TO/LifeSpacePlatform" -- node /ABSOLUTE/PATH/TO/LifeSpacePlatform/MCP/dist/server.js
 ```
 
-For briefing mode, replace `LSP_REPO_PATH` with `LSP_TOKEN`:
+### Briefing mode (for client projects)
 
-```json
-"env": { "LSP_TOKEN": "eyJ..." }
+```bash
+claude mcp add lsp --scope project -e LSP_TOKEN='<jwt>' -- npx -y github:LifeSpaceLLC/LifeSpacePlatform_MCP
 ```
 
-Restart Claude Code. Tools appear as `mcp__lsp__*` in every session.
+Both write to `.mcp.json` in the current project directory. Restart Claude Code. Tools appear as `mcp__lsp__*` for that project only.
+
+### Why project scope?
+
+Each client (Coach Simple, HarvestLoop, etc.) has its own tenant and its own JWT. If MCP were user-scoped (`~/.claude/settings.json`), every new session would overwrite the previous client's JWT. Project scope isolates each client's MCP config in its own `_git/` folder.
 
 ## Develop
 
