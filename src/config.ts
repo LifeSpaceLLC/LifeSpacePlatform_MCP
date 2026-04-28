@@ -13,7 +13,8 @@ export type ServiceId =
   | 'trust'
   | 'handoff'
   | 'promote'
-  | 'capture';
+  | 'capture'
+  | 'canvas';
 
 export interface ServiceConfig {
   url: string;
@@ -90,6 +91,12 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     url: 'https://capture.lifespace.com',
     personalEnvVar: 'CAPTURE_ADMIN_API_KEY',
     repoDir: 'Capture',
+    deployed: true,
+  },
+  canvas: {
+    url: 'https://canvas.lifespace.com',
+    personalEnvVar: 'CANVAS_ADMIN_API_KEY',
+    repoDir: 'Canvas',
     deployed: true,
   },
 };
