@@ -18,10 +18,11 @@ import * as tenant from './services/tenant.js';
 import * as trust from './services/trust.js';
 import * as handoff from './services/handoff.js';
 import * as promote from './services/promote.js';
+import * as capture from './services/capture.js';
 import { errText } from './client.js';
 import type { ToolDef, ToolHandler } from './types.js';
 
-const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote];
+const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture];
 
 const allTools: ToolDef[] = modules.flatMap((m) => m.tools);
 const allHandlers: Record<string, ToolHandler> = Object.assign(
