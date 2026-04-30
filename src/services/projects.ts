@@ -75,7 +75,7 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_projects_task_create',
     description:
-      "Create a task inside a project. Use when the user says 'add a task', 'on the list', 'track this', 'TODO this'. project_id is REQUIRED — if unclear, ask the user which project (call lsp_projects_list first).",
+      "Create a task (or sub-task) inside a project. Use when the user says 'add a task', 'on the list', 'track this', 'TODO this'. project_id is REQUIRED — if unclear, ask the user which project (call lsp_projects_list first). To create a sub-task, pass parent_id (two-level max). Sub-tasks created here are first-class tasks with full status/priority/due_at/assignee — for a strict checklist (title-only), call POST /tasks/:taskId/subtasks via curl instead.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -83,10 +83,21 @@ export const tools: ToolDef[] = [
         title: { type: 'string' },
         description: { type: 'string' },
         section_id: { type: 'string' },
-        status: { type: 'string' },
-        assignee: { type: 'string' },
+        parent_id: {
+          type: 'string',
+          description: 'UUID of parent task to make this a sub-task. Two levels max — parent must itself be a root task.',
+        },
+        status: {
+          type: 'string',
+          description: "Status id from project.status_defs, or built-in 'open'|'in_progress'|'done'|'cancelled' if no custom statuses defined.",
+        },
+        priority: { type: 'string', description: "'low' | 'normal' | 'high' | 'urgent'" },
+        assignee_user_id: { type: 'string', description: 'Email (human) or tenant UUID (agent).' },
+        ref_url: { type: 'string', description: 'Primary external URL the task is about.' },
         due_at: { type: 'string', description: 'ISO 8601 timestamp.' },
-        tags: { type: 'array', items: { type: 'string' } },
+        source: { type: 'string', description: "'human' | 'ai_agent' | 'ai_cleanup' | 'ai' | 'system'. Defaults to 'human'." },
+        batch_id: { type: 'string', description: 'UUID grouping related writes from one run.' },
+        custom_fields: { type: 'object', description: 'Values keyed by project.custom_field_defs[i].name.' },
       },
       required: ['project_id', 'title'],
     },
@@ -106,7 +117,8 @@ export const tools: ToolDef[] = [
   },
   {
     name: 'lsp_projects_task_update',
-    description: 'Update a task — title, description, status, section, assignee, due date.',
+    description:
+      'Update a task — any field optional. Setting status to a value whose semantic type is done/cancelled cascades to all sub-tasks. Set parent_id to null to promote a sub-task to a root task.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -114,10 +126,16 @@ export const tools: ToolDef[] = [
         id: { type: 'string' },
         title: { type: 'string' },
         description: { type: 'string' },
-        status: { type: 'string' },
+        status: { type: 'string', description: "Status id from project.status_defs, or built-in 'open'|'in_progress'|'done'|'cancelled'." },
+        priority: { type: 'string' },
         section_id: { type: 'string' },
-        assignee: { type: 'string' },
-        due_at: { type: 'string' },
+        parent_id: { type: ['string', 'null'], description: 'Set to null to promote a sub-task to a root task.' },
+        assignee_user_id: { type: 'string' },
+        ref_url: { type: ['string', 'null'] },
+        due_at: { type: ['string', 'null'] },
+        sort_order: { type: 'number' },
+        source: { type: 'string' },
+        custom_fields: { type: 'object' },
       },
       required: ['project_id', 'id'],
     },
