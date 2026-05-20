@@ -6,7 +6,7 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_dispatch_send',
     description:
-      "Send a message via Dispatch on any supported channel (SMS, email, Slack, Telegram, Pushover). Use this whenever the user says 'dispatch me', 'text me', 'email me when done', 'ping me', 'notify me', 'ding me', or similar. Dispatch resolves provider credentials from Keys, picks the right sender for the recipient's domain, and returns a message_id. Costs 1 credit for SMS; other channels are free.",
+      "Send a message via Dispatch on any supported channel (SMS, email, Slack, Telegram, Pushover). Use this whenever the user says 'dispatch me', 'text me', 'email me when done', 'ping me', 'notify me', 'ding me', or similar. Dispatch resolves provider credentials from Keys, picks the right sender for the recipient's domain, and returns a message_id. Email supports multiple To recipients (pass an array), cc, bcc, and file attachments. Costs 1 credit for SMS; other channels are free.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -16,11 +16,42 @@ export const tools: ToolDef[] = [
           description: "Channel to send on. SMS costs 1 credit; others are free.",
         },
         recipient: {
-          type: 'string',
+          // -- ClaudeCode: string for single recipient, OR array of strings for
+          // multiple To: addresses (email only — all recipients see each other).
+          anyOf: [
+            { type: 'string' },
+            { type: 'array', items: { type: 'string' } },
+          ],
           description:
-            "Channel-specific: E.164 phone for sms (+15551234567), email address for email, Slack channel ID for slack, numeric chat ID for telegram, Pushover user key for pushover.",
+            "Channel-specific: E.164 phone for sms (+15551234567), email address for email, Slack channel ID for slack, numeric chat ID for telegram, Pushover user key for pushover. For email, pass an ARRAY of addresses to send to multiple To: recipients (they see each other — use bcc for privacy).",
         },
-        body: { type: 'string', description: 'Message body (plain text or HTML for email).' },
+        body: { type: 'string', description: 'Message body. Email accepts plain text, markdown, or HTML — Dispatch renders markdown (and converts bullet lists) automatically.' },
+        cc: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Email addresses to CC. Email channel only.',
+        },
+        bcc: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Email addresses to BCC. Email channel only.',
+        },
+        attachments: {
+          // -- ClaudeCode: email-only file attachments. content MUST be base64.
+          type: 'array',
+          description:
+            'File attachments (email channel only). Max 10 files, 25MB total. Each item: { filename, content, type?, disposition? }.',
+          items: {
+            type: 'object',
+            properties: {
+              filename: { type: 'string', description: 'Display filename, e.g. "invoice.pdf".' },
+              content: { type: 'string', description: 'Base64-encoded file content (required).' },
+              type: { type: 'string', description: 'MIME type, e.g. "application/pdf". Defaults to application/octet-stream.' },
+              disposition: { type: 'string', enum: ['attachment', 'inline'], description: 'Defaults to "attachment".' },
+            },
+            required: ['filename', 'content'],
+          },
+        },
         config: {
           type: 'object',
           description:
