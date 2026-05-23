@@ -15,7 +15,8 @@ export type ServiceId =
   | 'promote'
   | 'capture'
   | 'canvas'
-  | 'calendar';
+  | 'calendar'
+  | 'assistant';
 
 export interface ServiceConfig {
   url: string;
@@ -104,6 +105,12 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     url: 'https://calendar.lifespace.com',
     personalEnvVar: 'CALENDAR_ADMIN_API_KEY',
     repoDir: 'Calendar',
+    deployed: true,
+  },
+  assistant: {
+    url: 'https://assistant.lifespace.com',
+    personalEnvVar: 'ASSISTANT_ADMIN_API_KEY',
+    repoDir: 'Assistant',
     deployed: true,
   },
 };
