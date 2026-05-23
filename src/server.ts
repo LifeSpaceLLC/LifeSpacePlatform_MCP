@@ -20,10 +20,11 @@ import * as handoff from './services/handoff.js';
 import * as promote from './services/promote.js';
 import * as capture from './services/capture.js';
 import * as canvas from './services/canvas.js';
+import * as calendar from './services/calendar.js';
 import { errText } from './client.js';
 import type { ToolDef, ToolHandler } from './types.js';
 
-const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture, canvas];
+const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture, canvas, calendar];
 
 const allTools: ToolDef[] = modules.flatMap((m) => m.tools);
 const allHandlers: Record<string, ToolHandler> = Object.assign(
