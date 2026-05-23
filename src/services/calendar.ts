@@ -56,10 +56,41 @@ export const tools: ToolDef[] = [
         starts_at: { type: 'string', description: 'ISO datetime (or date for all-day).' },
         ends_at: { type: 'string', description: 'ISO datetime/date.' },
         all_day: { type: 'boolean' },
+        busy: { type: 'boolean', description: 'Default true. Set FALSE for informational/covered events that should NOT block bookable time (avoids double-book with scheduling tools).' },
+        color_id: { type: 'string', description: "Optional Google event color ('1'..'11') — e.g. to color-code per person/category." },
         subject_id: { type: 'string', description: 'Optional — the subject this event is about (kid/pet/elder).' },
         source: { type: 'string', enum: ['manual', 'email_ingest', 'sync'], description: "Where it came from. Use 'email_ingest' when created from a parsed email." },
       },
       required: ['calendar_id', 'title'],
+    },
+  },
+  {
+    name: 'lsp_calendar_create_subject',
+    description:
+      "Create a subject the schedule is ABOUT — a child, pet, or elder (e.g. Ari, Miro). Required before custody + coverage-gap detection can run. Use for 'add Ari', 'track my son', 'set up the kids'.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['child', 'pet', 'elder', 'self', 'other'] },
+        name: { type: 'string' },
+        dob: { type: 'string', description: 'Optional YYYY-MM-DD — drives age-appropriate handling.' },
+        attributes: { type: 'object', description: 'Optional: school, grade, activities, roster, etc.', additionalProperties: true },
+      },
+      required: ['kind', 'name'],
+    },
+  },
+  {
+    name: 'lsp_calendar_share_calendar',
+    description:
+      "Share a calendar with another person's Google account so it appears in their Google Calendar (e.g. share 'Ari's World - Shared' with a co-parent). Use for 'share with Sherry', 'give my wife access'.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        calendar_id: { type: 'string' },
+        email: { type: 'string', description: "The person's email to share with." },
+        role: { type: 'string', enum: ['writer', 'reader'], description: "Default 'writer' (can add/edit); 'reader' = view only." },
+      },
+      required: ['calendar_id', 'email'],
     },
   },
   {
@@ -152,6 +183,11 @@ export const handlers: Record<string, ToolHandler> = {
     return okText(await call('calendar', `/v1/events/${id}`, 'DELETE'));
   },
   lsp_calendar_list_subjects: async () => okText(await call('calendar', '/v1/subjects', 'GET')),
+  lsp_calendar_create_subject: async (args) => okText(await call('calendar', '/v1/subjects', 'POST', args)),
+  lsp_calendar_share_calendar: async (args) => {
+    const { calendar_id, ...body } = args as { calendar_id: string } & Record<string, unknown>;
+    return okText(await call('calendar', `/v1/calendars/${calendar_id}/share`, 'POST', body));
+  },
   lsp_calendar_set_custody: async (args) => okText(await call('calendar', '/v1/custody', 'POST', args)),
   lsp_calendar_get_coverage: async (args) => {
     const qs = new URLSearchParams({ status: 'open', ...(args as Record<string, string>) }).toString();
