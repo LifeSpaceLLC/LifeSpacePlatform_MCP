@@ -102,6 +102,8 @@ export const tools: ToolDef[] = [
         id: { type: 'string', description: 'Event id.' },
         title: { type: 'string' }, description: { type: 'string' }, location: { type: 'string' },
         starts_at: { type: 'string' }, ends_at: { type: 'string' }, all_day: { type: 'boolean' }, status: { type: 'string' },
+        busy: { type: 'boolean', description: 'true = blocks bookable time; false = free/informational.' },
+        color_id: { type: 'string', description: "Google event color ('1'..'11')." },
       },
       required: ['id'],
     },
