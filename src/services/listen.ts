@@ -53,6 +53,7 @@ export const tools: ToolDef[] = [
         source_id: { type: 'string' },
         handler: { type: 'object', description: 'Declarative rule list (see description).', additionalProperties: true },
         tag_retention_days: { type: 'number' },
+        backfill_days: { type: 'number', description: 'Back-check: scan the last N days of the source against this new handler right now (omit or 0 = forward-only). Response includes a backfill summary { from, fetched, scanned, tagged }.' },
       },
       required: ['consumer_key', 'source_id', 'handler'],
     },
