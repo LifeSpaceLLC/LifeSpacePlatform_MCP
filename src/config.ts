@@ -16,7 +16,8 @@ export type ServiceId =
   | 'capture'
   | 'canvas'
   | 'calendar'
-  | 'assistant';
+  | 'assistant'
+  | 'listen';
 
 export interface ServiceConfig {
   url: string;
@@ -111,6 +112,12 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     url: 'https://assistant.lifespace.com',
     personalEnvVar: 'ASSISTANT_ADMIN_API_KEY',
     repoDir: 'Assistant',
+    deployed: true,
+  },
+  listen: {
+    url: 'https://listen.lifespace.com',
+    personalEnvVar: 'LISTEN_ADMIN_API_KEY',
+    repoDir: 'Listen',
     deployed: true,
   },
 };
