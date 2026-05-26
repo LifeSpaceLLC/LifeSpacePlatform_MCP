@@ -47,7 +47,8 @@ export const tools: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        consumer_key: { type: 'string', description: '<kind>:<owner>:<purpose> — unique per tenant, becomes the tag namespace.' },
+        consumer_key: { type: 'string', description: '<kind>:<owner>:<purpose> — unique per tenant, becomes the tag namespace (IMMUTABLE identity).' },
+        label: { type: 'string', description: 'Human display name for the workflow — freely renamable later via PATCH (the consumer_key never changes).' },
         kind: { type: 'string', enum: ['assistant', 'module', 'operator', 'agent'] },
         owner_ref: { type: 'string', description: 'agent/session/user/module id that owns this registration.' },
         source_id: { type: 'string' },
