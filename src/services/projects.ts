@@ -1,18 +1,27 @@
 // -- ClaudeCode: Projects MCP tools.
-// Real routes (verified 2026-04-21 against Projects/src/routes/projects.ts):
+// Real routes (verified 2026-05-12 against Projects/src/routes/projects.ts):
 //   Projects:
 //     GET    /v1/projects                         — list
-//     POST   /v1/projects                         — create { name, description?, status?, custom_field_defs? }
+//     POST   /v1/projects                         — create { name, description?, status?, custom_field_defs?, status_defs?, apply_status_template? }
 //     GET    /v1/projects/:id                     — get one
-//     PATCH  /v1/projects/:id                     — update
+//     PATCH  /v1/projects/:id                     — update (name/description/status/custom_field_defs/status_defs)
 //     DELETE /v1/projects/:id                     — soft-delete
-//   Tasks (always scoped under a project):
+//   Sections (one level, nested under project):
+//     POST   /v1/projects/:projectId/sections     — create
+//     PATCH  /v1/projects/:projectId/sections/:id — update
+//     DELETE /v1/projects/:projectId/sections/:id — soft-delete
+//   Tasks (nested under project; sub-tasks via parent_id, two levels max):
 //     GET    /v1/projects/:projectId/tasks        — list (filters: section_id, status, assignee)
 //     POST   /v1/projects/:projectId/tasks        — create
 //     GET    /v1/projects/:projectId/tasks/:id    — get
 //     PATCH  /v1/projects/:projectId/tasks/:id    — update
 //     DELETE /v1/projects/:projectId/tasks/:id    — delete
-//   Sections, members, notes also nested under :projectId.
+//   Members (humans by email, agents by tenant UUID):
+//     POST   /v1/projects/:projectId/members      — add
+//     PATCH  /v1/projects/:projectId/members/:id  — role + active flag
+//     DELETE /v1/projects/:projectId/members/:id  — remove
+//   Notes (append-only): POST/GET under :projectId
+//   Sprint Handoff: POST /v1/projects/:projectId/sprint — forwards to Handoff /v1/packets
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText } from '../client.js';
 
@@ -141,6 +150,120 @@ export const tools: ToolDef[] = [
     },
   },
   {
+    name: 'lsp_projects_update',
+    description:
+      "Update a project's name / description / status / status_defs / custom_field_defs. Primary-tenant only (backend enforces). Use when the user says 'rename the project', 'update the description', 'add a status', 'add a custom field'. Status_defs entries each carry an `id` + `name` + `color` + `type` (one of: open | in_progress | ai_pending | pending | done | cancelled). custom_field_defs is the full replacement array (max 5 entries).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        name: { type: 'string' },
+        description: { type: 'string' },
+        status: { type: 'string', description: "'active' | 'archived' | 'draft'" },
+        status_defs: {
+          type: 'array',
+          description: 'Full replacement array. Each entry: { id, name, color, type }. Type ∈ open | in_progress | ai_pending | pending | done | cancelled.',
+          items: { type: 'object', additionalProperties: true },
+        },
+        custom_field_defs: {
+          type: 'array',
+          description: 'Full replacement array (max 5). Each entry: { name, type, options? }.',
+          items: { type: 'object', additionalProperties: true },
+        },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'lsp_projects_section_create',
+    description:
+      "Create a section inside a project. Sections are one level deep; tasks belong to either a section or no section. Use when the user says 'add a section', 'create a phase/milestone' (sections are the canonical place for those).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        name: { type: 'string' },
+        sort_order: { type: 'number', description: 'Lower = earlier. Default 0.' },
+        start_date: { type: 'string', description: 'ISO 8601 — used for section-range warning on tasks with due dates outside.' },
+        end_date: { type: 'string', description: 'ISO 8601.' },
+      },
+      required: ['project_id', 'name'],
+    },
+  },
+  {
+    name: 'lsp_projects_section_update',
+    description:
+      "Update a section — name / sort_order / date range. Pass null to clear a date.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        id: { type: 'string' },
+        name: { type: 'string' },
+        sort_order: { type: 'number' },
+        start_date: { type: ['string', 'null'] },
+        end_date: { type: ['string', 'null'] },
+      },
+      required: ['project_id', 'id'],
+    },
+  },
+  {
+    name: 'lsp_projects_section_delete',
+    description:
+      "Soft-delete a section. Tasks belonging to the section are NOT deleted — they remain on the project (their section_id will still reference the deleted row, so callers should set section_id=null on those tasks separately if desired).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        id: { type: 'string' },
+      },
+      required: ['project_id', 'id'],
+    },
+  },
+  {
+    name: 'lsp_projects_member_add',
+    description:
+      "Add a member to a project. user_id is the principal: email for humans (e.g. 'jane@example.com'), tenant UUID for agents. principal_type is auto-inferred from shape unless overridden. Role: 'owner' | 'member' | 'viewer' (default 'member'). Viewers are read-only.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        user_id: { type: 'string', description: 'Email (human) OR tenant UUID (agent).' },
+        role: { type: 'string', description: "'owner' | 'member' | 'viewer'. Default 'member'." },
+        principal_type: { type: 'string', enum: ['user', 'agent'], description: "Auto-inferred from user_id shape (UUID → 'agent', else 'user')." },
+      },
+      required: ['project_id', 'user_id'],
+    },
+  },
+  {
+    name: 'lsp_projects_member_update',
+    description:
+      "Update a member's role or active flag. Use active=false to soft-deactivate without removing the row.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        id: { type: 'string', description: 'Member row UUID (NOT user_id).' },
+        role: { type: 'string', description: "'owner' | 'member' | 'viewer'" },
+        active: { type: 'boolean' },
+      },
+      required: ['project_id', 'id'],
+    },
+  },
+  {
+    name: 'lsp_projects_member_remove',
+    description:
+      "Hard-delete a member row. For soft-deactivate, use lsp_projects_member_update with active=false instead.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        id: { type: 'string', description: 'Member row UUID (NOT user_id).' },
+      },
+      required: ['project_id', 'id'],
+    },
+  },
+  {
     name: 'lsp_projects_note_add',
     description:
       "Append a note (threaded, immutable) to a project or a specific task. Notes are the canonical place for append-only updates and context.",
@@ -225,5 +348,33 @@ export const handlers: Record<string, ToolHandler> = {
     };
     const q = include_task_notes ? '?include_task_notes=true' : '';
     return okText(await call('projects', `/v1/projects/${project_id}/notes${q}`, 'GET'));
+  },
+  lsp_projects_update: async (args) => {
+    const { id, ...body } = args as Record<string, unknown> & { id: string };
+    return okText(await call('projects', `/v1/projects/${id}`, 'PATCH', body));
+  },
+  lsp_projects_section_create: async (args) => {
+    const { project_id, ...body } = args as Record<string, unknown> & { project_id: string };
+    return okText(await call('projects', `/v1/projects/${project_id}/sections`, 'POST', body));
+  },
+  lsp_projects_section_update: async (args) => {
+    const { project_id, id, ...body } = args as Record<string, unknown> & { project_id: string; id: string };
+    return okText(await call('projects', `/v1/projects/${project_id}/sections/${id}`, 'PATCH', body));
+  },
+  lsp_projects_section_delete: async (args) => {
+    const { project_id, id } = args as { project_id: string; id: string };
+    return okText(await call('projects', `/v1/projects/${project_id}/sections/${id}`, 'DELETE'));
+  },
+  lsp_projects_member_add: async (args) => {
+    const { project_id, ...body } = args as Record<string, unknown> & { project_id: string };
+    return okText(await call('projects', `/v1/projects/${project_id}/members`, 'POST', body));
+  },
+  lsp_projects_member_update: async (args) => {
+    const { project_id, id, ...body } = args as Record<string, unknown> & { project_id: string; id: string };
+    return okText(await call('projects', `/v1/projects/${project_id}/members/${id}`, 'PATCH', body));
+  },
+  lsp_projects_member_remove: async (args) => {
+    const { project_id, id } = args as { project_id: string; id: string };
+    return okText(await call('projects', `/v1/projects/${project_id}/members/${id}`, 'DELETE'));
   },
 };
