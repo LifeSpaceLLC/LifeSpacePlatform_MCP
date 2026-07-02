@@ -30,7 +30,13 @@ import type { ToolDef, ToolHandler } from './types.js';
 
 const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture, canvas, calendar, assistant, listen, skills, agent];
 
-const allTools: ToolDef[] = modules.flatMap((m) => m.tools);
+// -- ClaudeCode: Enterprise mode surfaces admin-only tools (tenant create, keys store).
+// Gate on LSP_ENTERPRISE=1; backend still enforces admin scope as defense-in-depth.
+const ENTERPRISE = process.env.LSP_ENTERPRISE === '1' || process.env.LSP_ADMIN_MODE === '1';
+const allTools: ToolDef[] = modules.flatMap((m) => [
+  ...m.tools,
+  ...(ENTERPRISE && (m as { adminTools?: ToolDef[] }).adminTools ? (m as { adminTools?: ToolDef[] }).adminTools! : []),
+]);
 const allHandlers: Record<string, ToolHandler> = Object.assign(
   {},
   ...modules.map((m) => m.handlers),

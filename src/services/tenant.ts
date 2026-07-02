@@ -43,8 +43,36 @@ export const tools: ToolDef[] = [
   },
 ];
 
+// -- ClaudeCode: Enterprise-only tools. Surfaced only when the MCP runs in enterprise
+// mode (LSP_ENTERPRISE=1) with an admin-scoped token. Never exposed in client briefings.
+export const adminTools: ToolDef[] = [
+  {
+    name: 'lsp_tenant_create',
+    description:
+      "ENTERPRISE/admin only. Create a new sub-tenant in the tenant tree. Use to stand up a child tenant before onboarding an AI into it; pair with lsp_tenant_briefing_create to mint the AI's token. Requires admin-scoped auth; the parent must be within your admin subtree.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Tenant display name.' },
+        type: { type: 'string', description: "Tenant type: 'enterprise', 'group', 'agent', 'multi-enterprise', or 'global'." },
+        parent_tenant_id: { type: 'string', description: 'UUID of the parent tenant (must be in your admin subtree).' },
+        config: { type: 'object', description: 'Optional config object.' },
+      },
+      required: ['name', 'type', 'parent_tenant_id'],
+    },
+  },
+];
+
 export const handlers: Record<string, ToolHandler> = {
   lsp_tenant_list: async () => okText(await call('tenant', '/v1/tenants', 'GET')),
+  lsp_tenant_create: async (args) => {
+    const { name, type, parent_tenant_id, config } = args as {
+      name: string; type: string; parent_tenant_id?: string; config?: Record<string, unknown>;
+    };
+    return okText(await call('tenant', '/v1/tenants', 'POST', {
+      name, type, parentId: parent_tenant_id ?? null, config: config ?? {},
+    }));
+  },
   lsp_tenant_briefing_create: async (args) => okText(await call('tenant', '/v1/briefings', 'POST', args)),
   lsp_tenant_briefing_list: async () => okText(await call('tenant', '/v1/briefings', 'GET')),
   lsp_tenant_briefing_revoke: async (args) => {

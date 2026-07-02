@@ -36,7 +36,32 @@ export const tools: ToolDef[] = [
   },
 ];
 
+// -- ClaudeCode: Enterprise-only. Write a credential into a tenant's vault. Surfaced only
+// when the MCP runs in enterprise mode (LSP_ENTERPRISE=1) with keys:write (admin) auth.
+export const adminTools: ToolDef[] = [
+  {
+    name: 'lsp_keys_store',
+    description:
+      "ENTERPRISE/admin only. Store one or more credentials in Keys for a provider (seed a tenant's vault). Requires keys:write (admin) auth. Never expose in client briefings.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', description: "Provider id (e.g. 'sendgrid', 'twilio', 'custom')." },
+        keys: { type: 'object', description: 'Map of keyName -> value, e.g. { api_key: "SG.xxx" }.' },
+        label: { type: 'string', description: "Connection label. Defaults to 'default'." },
+      },
+      required: ['provider', 'keys'],
+    },
+  },
+];
+
 export const handlers: Record<string, ToolHandler> = {
+  lsp_keys_store: async (args) => {
+    const { provider, keys, label } = args as {
+      provider: string; keys: Record<string, string>; label?: string;
+    };
+    return okText(await call('keys', '/v1/keys', 'POST', { provider, keys, label: label ?? 'default' }));
+  },
   lsp_keys_get: async (args) => {
     const { provider, label } = args as { provider: string; label?: string };
     const path = label ? `/v1/keys/${provider}?app=${encodeURIComponent(label)}` : `/v1/keys/${provider}`;
