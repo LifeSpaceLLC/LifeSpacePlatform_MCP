@@ -122,10 +122,9 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     deployed: true,
   },
   // -- ClaudeCode (2026-07-01): Skills — versioned agent-skill registry.
-  // Railway URL until skills.lifespace.com DNS + cert land (flip then; the
-  // Railway URL keeps working either way). Override via LSP_SKILLS_URL.
+  // Custom domain live (cert issued 2026-07-01). Override via LSP_SKILLS_URL.
   skills: {
-    url: process.env.LSP_SKILLS_URL ?? 'https://lifespace-skills-production.up.railway.app',
+    url: process.env.LSP_SKILLS_URL ?? 'https://skills.lifespace.com',
     personalEnvVar: 'SKILLS_ADMIN_API_KEY',
     repoDir: 'Skills',
     deployed: true,
