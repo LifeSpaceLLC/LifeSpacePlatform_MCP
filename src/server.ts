@@ -24,10 +24,11 @@ import * as calendar from './services/calendar.js';
 import * as assistant from './services/assistant.js';
 import * as listen from './services/listen.js';
 import * as skills from './services/skills.js';
+import * as agent from './services/agent.js';
 import { errText } from './client.js';
 import type { ToolDef, ToolHandler } from './types.js';
 
-const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture, canvas, calendar, assistant, listen, skills];
+const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture, canvas, calendar, assistant, listen, skills, agent];
 
 const allTools: ToolDef[] = modules.flatMap((m) => m.tools);
 const allHandlers: Record<string, ToolHandler> = Object.assign(

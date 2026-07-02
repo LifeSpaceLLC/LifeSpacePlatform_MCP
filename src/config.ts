@@ -18,7 +18,8 @@ export type ServiceId =
   | 'calendar'
   | 'assistant'
   | 'listen'
-  | 'skills';
+  | 'skills'
+  | 'agent';
 
 export interface ServiceConfig {
   url: string;
@@ -127,6 +128,14 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     url: process.env.LSP_SKILLS_URL ?? 'https://skills.lifespace.com',
     personalEnvVar: 'SKILLS_ADMIN_API_KEY',
     repoDir: 'Skills',
+    deployed: true,
+  },
+  // -- ClaudeCode (2026-07-01): Agent — machine-claimable envelope work queue.
+  // Custom domain live (cert VALID 2026-07-01). Override via LSP_AGENT_URL.
+  agent: {
+    url: process.env.LSP_AGENT_URL ?? 'https://agent.lifespace.com',
+    personalEnvVar: 'AGENT_ADMIN_API_KEY',
+    repoDir: 'Agent',
     deployed: true,
   },
 };
