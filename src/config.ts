@@ -17,7 +17,8 @@ export type ServiceId =
   | 'canvas'
   | 'calendar'
   | 'assistant'
-  | 'listen';
+  | 'listen'
+  | 'skills';
 
 export interface ServiceConfig {
   url: string;
@@ -118,6 +119,15 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     url: 'https://listen.lifespace.com',
     personalEnvVar: 'LISTEN_ADMIN_API_KEY',
     repoDir: 'Listen',
+    deployed: true,
+  },
+  // -- ClaudeCode (2026-07-01): Skills — versioned agent-skill registry.
+  // Railway URL until skills.lifespace.com DNS + cert land (flip then; the
+  // Railway URL keeps working either way). Override via LSP_SKILLS_URL.
+  skills: {
+    url: process.env.LSP_SKILLS_URL ?? 'https://lifespace-skills-production.up.railway.app',
+    personalEnvVar: 'SKILLS_ADMIN_API_KEY',
+    repoDir: 'Skills',
     deployed: true,
   },
 };

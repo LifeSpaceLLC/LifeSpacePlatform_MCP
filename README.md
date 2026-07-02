@@ -18,6 +18,7 @@ Stdio MCP server wrapping live LifeSpace Platform services as first-class tools 
 | Tenant | `lsp_tenant_list`, `lsp_tenant_briefing_create`, `lsp_tenant_briefing_list`, `lsp_tenant_briefing_revoke` | Live |
 | Trust | `lsp_trust_whoami` | Live |
 | Handoff | `lsp_handoff_compose`, `lsp_handoff_send`, `lsp_handoff_list`, `lsp_handoff_transition` | Scaffolded (returns 503 until deployed) |
+| Skills | `lsp_skills_search`, `lsp_skills_get`, `lsp_skills_write`, `lsp_skills_publish`, `lsp_skills_list` | Live (2026-07-01) |
 
 ## Build
 
