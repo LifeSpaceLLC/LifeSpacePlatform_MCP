@@ -188,6 +188,70 @@ export const tools: ToolDef[] = [
       },
     },
   },
+  {
+    name: 'lsp_agent_template_list',
+    description:
+      "List this tenant's agent task templates (reusable envelopes: pinned skills + tools + context refs + acceptance + commands, minus instance specifics). Use before composing — if a template matches, instantiate instead of free-composing.",
+    inputSchema: {
+      type: 'object',
+      properties: { status: { type: 'string', enum: ['active', 'archived'] } },
+    },
+  },
+  {
+    name: 'lsp_agent_template_get',
+    description: 'Fetch one agent task template by its key, including instructions and params_hint (what instance details an instantiation must supply).',
+    inputSchema: {
+      type: 'object',
+      properties: { template_key: { type: 'string' } },
+      required: ['template_key'],
+    },
+  },
+  {
+    name: 'lsp_agent_template_write',
+    description:
+      "Create or update a reusable agent task template. Use when the user says 'make this a template', 'save this as a reusable agent'. Carries everything EXCEPT instance specifics: intent, generic instructions, params_hint, required_skills (pin concrete versions), required_tools, context_refs, acceptance, on_success/on_failure commands.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        template_key: { type: 'string', description: 'Slug, unique per tenant (a-z 0-9 -).' },
+        name: { type: 'string' },
+        intent: { type: 'string', description: 'From GET /v1/intents (lsp_agent_compose).' },
+        instructions: { type: 'string', description: 'The generic how — instance details get appended at instantiate.' },
+        params_hint: { type: 'string', description: 'What instance specifics an instantiator must supply.' },
+        required_tools: { type: 'array', items: { type: 'string' } },
+        required_skills: { type: 'array', items: { type: 'object', properties: { skill_key: { type: 'string' }, version: {} } } },
+        context_refs: { type: 'array', items: { type: 'object', properties: { module: { type: 'string' }, ref_id: { type: 'string' }, label: { type: 'string' } } } },
+        acceptance: { type: 'array', items: { type: 'object' } },
+        verify_by: { type: 'string', enum: ['self', 'other_agent', 'human'] },
+        constraints: { type: 'object' },
+        gates: { type: 'array', items: { type: 'object' } },
+        on_success: { type: 'array', items: { type: 'object' } },
+        on_failure: { type: 'array', items: { type: 'object' } },
+        priority: { type: 'number' },
+        max_attempts: { type: 'number' },
+        billable: { type: 'boolean' },
+      },
+      required: ['template_key'],
+    },
+  },
+  {
+    name: 'lsp_agent_template_instantiate',
+    description:
+      "Stamp a task from a template: template envelope + instance title/details -> DRAFT task (policy gates injected server-side). Use when the user says 'create X from the Y template', 'run the dashboard template for client Z'. Pass enqueue:true only with explicit user approval.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        template_key: { type: 'string' },
+        title: { type: 'string' },
+        details: { type: 'string', description: "Instance-specific instructions (fills the template's params_hint)." },
+        context_refs: { type: 'array', items: { type: 'object' }, description: 'ADDED to the template refs.' },
+        project_ref: { type: 'object' },
+        priority: { type: 'number' },
+        enqueue: { type: 'boolean' },
+      },
+      required: ['template_key', 'title'],
+    },
+  },
 ];
 
 export const handlers: Record<string, ToolHandler> = {
@@ -257,5 +321,29 @@ export const handlers: Record<string, ToolHandler> = {
       return okText(await call('agent', '/v1/policy', 'GET'));
     }
     return okText(await call('agent', '/v1/policy', 'PUT', fields));
+  },
+  lsp_agent_template_list: async (args) => {
+    const { status } = args as { status?: string };
+    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    return okText(await call('agent', `/v1/templates${qs}`, 'GET'));
+  },
+  lsp_agent_template_get: async (args) => {
+    const { template_key } = args as { template_key: string };
+    return okText(await call('agent', `/v1/templates/${encodeURIComponent(template_key)}`, 'GET'));
+  },
+  lsp_agent_template_write: async (args) => {
+    const { template_key, ...rest } = args as { template_key: string } & Record<string, unknown>;
+    try {
+      return okText(await call('agent', '/v1/templates', 'POST', { template_key, ...rest }));
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('409')) {
+        return okText(await call('agent', `/v1/templates/${encodeURIComponent(template_key)}`, 'PUT', rest));
+      }
+      throw err;
+    }
+  },
+  lsp_agent_template_instantiate: async (args) => {
+    const { template_key, ...rest } = args as { template_key: string } & Record<string, unknown>;
+    return okText(await call('agent', `/v1/templates/${encodeURIComponent(template_key)}/instantiate`, 'POST', rest));
   },
 };
