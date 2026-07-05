@@ -252,6 +252,79 @@ export const tools: ToolDef[] = [
       required: ['template_key', 'title'],
     },
   },
+  // ── Runners (Execute data plane) ─────────────────────────────────────────
+  {
+    name: 'lsp_agent_runner_list',
+    description:
+      "List this tenant's Execute workers (runners) with live status: liveness (online|stale|offline|disabled, derived from heartbeat), what each is running now, host/platform/version, capabilities. This is the control-screen data. Use to answer 'is a worker running?' or 'is anything stuck?'. (Workers self-register + heartbeat via the worker process, not these tools.)",
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'lsp_agent_runner_set',
+    description:
+      "Enable or disable an Execute worker — the admin kill switch. Disabling stops it claiming new work after its current task (reaches a running worker via its next heartbeat). Needs tenant_admin.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        runner_id: { type: 'string' },
+        enabled: { type: 'boolean' },
+      },
+      required: ['runner_id', 'enabled'],
+    },
+  },
+  {
+    name: 'lsp_agent_runner_remove',
+    description: 'Deregister a decommissioned worker from the registry (only when offline). Needs tenant_admin.',
+    inputSchema: {
+      type: 'object',
+      properties: { runner_id: { type: 'string' } },
+      required: ['runner_id'],
+    },
+  },
+  // ── Schedules (Execute scheduler) ────────────────────────────────────────
+  {
+    name: 'lsp_agent_schedule_list',
+    description:
+      "List this tenant's recurring agent schedules: rrule, next_fire_at, last fire, fire count, what each stamps (template key or inline envelope). A schedule stamps a QUEUED envelope at each fire; a worker claims it.",
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'lsp_agent_schedule_write',
+    description:
+      "Create or update a recurring schedule. Pass an `id` to update; omit it to create. WHAT to stamp = either a template_key OR an inline envelope {intent, description}. rrule is an RFC-5545 RRULE (e.g. FREQ=DAILY;BYHOUR=9;BYMINUTE=0, treated as UTC). The service recomputes next_fire_at.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Existing schedule to update; omit to create.' },
+        name: { type: 'string' },
+        rrule: { type: 'string', description: 'RFC-5545 RRULE, UTC. e.g. FREQ=WEEKLY;BYDAY=MO;BYHOUR=8;BYMINUTE=0' },
+        template_key: { type: 'string', description: 'Instantiate this template on each fire (XOR envelope).' },
+        envelope: { type: 'object', description: 'Inline envelope {intent, description} (XOR template_key).' },
+        instance_title: { type: 'string', description: 'Title for stamped tasks (defaults to the schedule name).' },
+        priority: { type: 'number' },
+        skip_if_pending: { type: 'boolean', description: 'Default true — skip a fire if a prior instance is still in flight.' },
+        active: { type: 'boolean' },
+      },
+    },
+  },
+  {
+    name: 'lsp_agent_schedule_delete',
+    description: 'Delete a recurring schedule.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'lsp_agent_schedule_run_now',
+    description: "Fire a schedule immediately — stamps one queued envelope now, out of band (does not touch next_fire_at). Use to test a schedule or trigger an ad-hoc run.",
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+  },
 ];
 
 export const handlers: Record<string, ToolHandler> = {
@@ -345,5 +418,36 @@ export const handlers: Record<string, ToolHandler> = {
   lsp_agent_template_instantiate: async (args) => {
     const { template_key, ...rest } = args as { template_key: string } & Record<string, unknown>;
     return okText(await call('agent', `/v1/templates/${encodeURIComponent(template_key)}/instantiate`, 'POST', rest));
+  },
+  // ── Runners ──────────────────────────────────────────────────────────────
+  lsp_agent_runner_list: async () => {
+    return okText(await call('agent', '/v1/runners', 'GET'));
+  },
+  lsp_agent_runner_set: async (args) => {
+    const { runner_id, enabled } = args as { runner_id: string; enabled: boolean };
+    return okText(await call('agent', `/v1/runners/${encodeURIComponent(runner_id)}`, 'PATCH', { enabled }));
+  },
+  lsp_agent_runner_remove: async (args) => {
+    const { runner_id } = args as { runner_id: string };
+    return okText(await call('agent', `/v1/runners/${encodeURIComponent(runner_id)}`, 'DELETE'));
+  },
+  // ── Schedules ──────────────────────────────────────────────────────────────
+  lsp_agent_schedule_list: async () => {
+    return okText(await call('agent', '/v1/schedules', 'GET'));
+  },
+  lsp_agent_schedule_write: async (args) => {
+    const { id, ...rest } = args as { id?: string } & Record<string, unknown>;
+    if (id) {
+      return okText(await call('agent', `/v1/schedules/${encodeURIComponent(id)}`, 'PATCH', rest));
+    }
+    return okText(await call('agent', '/v1/schedules', 'POST', rest));
+  },
+  lsp_agent_schedule_delete: async (args) => {
+    const { id } = args as { id: string };
+    return okText(await call('agent', `/v1/schedules/${encodeURIComponent(id)}`, 'DELETE'));
+  },
+  lsp_agent_schedule_run_now: async (args) => {
+    const { id } = args as { id: string };
+    return okText(await call('agent', `/v1/schedules/${encodeURIComponent(id)}/run-now`, 'POST', {}));
   },
 };
