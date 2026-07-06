@@ -1,5 +1,6 @@
 // -- ClaudeCode: Thin HTTPS client for LSP services. Resolves auth per-service, formats errors.
 import { SERVICES, authFor, type ServiceId } from './config.js';
+import { ensureReady, isTokenMode, refreshAccessToken } from './auth.js';
 
 export async function call(
   service: ServiceId,
@@ -14,17 +15,30 @@ export async function call(
       `Service ${service} is scaffolded but not deployed yet. This tool will return useful results once the service goes live.`,
     );
   }
+  // -- ClaudeCode (2026-07-06): Trust Auth v2 — ensure the token lifecycle is
+  // initialized (zero-touch migration runs once, memoized). No-op in personal mode.
+  await ensureReady();
   const url = `${cfg.url}${path}`;
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${authFor(service)}`,
-    ...extraHeaders,
+  const doFetch = () => {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${authFor(service)}`,
+      ...extraHeaders,
+    };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    return fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
   };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let res = await doFetch();
+  // -- ClaudeCode: silent refresh-on-401. If the access token lapsed, renew via
+  // the stored refresh token and retry ONCE. A session that would have died mid-
+  // work now self-heals with no user action. Only in token mode; only on 401.
+  if (res.status === 401 && isTokenMode()) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) res = await doFetch();
+  }
   const text = await res.text();
   let parsed: unknown = null;
   if (text) {

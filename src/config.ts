@@ -1,6 +1,7 @@
 // -- ClaudeCode: LSP service config — URLs + per-service env var names for personal-mode auth.
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { currentBearer } from './auth.js';
 
 export type ServiceId =
   | 'dispatch'
@@ -183,7 +184,10 @@ function loadRepoEnv(repoDir: string): Record<string, string> {
  * 3. Per-service admin API key read from {LSP_REPO_PATH}/{Service}/.env (personal mode)
  */
 export function authFor(service: ServiceId): string {
-  if (process.env.LSP_TOKEN) return process.env.LSP_TOKEN;
+  // -- ClaudeCode (2026-07-06): Trust Auth v2 — in token mode, prefer the
+  // silent-refresh-managed bearer (live access token, falling back to the raw
+  // LSP_TOKEN). currentBearer() never returns null while LSP_TOKEN is set.
+  if (process.env.LSP_TOKEN) return currentBearer() ?? process.env.LSP_TOKEN;
   const cfg = SERVICES[service];
   const prefixed = process.env[`LSP_${cfg.personalEnvVar}`];
   if (prefixed) return prefixed;
