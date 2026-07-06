@@ -2,6 +2,30 @@
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText } from '../client.js';
 
+// -- ClaudeCode: Canonical handoff intents — MUST stay in lockstep with the
+// Handoff backend's ALL_INTENTS (Handoff/src/routes/packets.ts). validateCreate()
+// 400s any intent not in this exact set.
+// Fixed 2026-07-06 (bug dfca61cf): the prior MCP enum was
+// ['continue','finish_and_ship','review_and_merge','fresh_session','discontinue_and_postmortem']
+// — only 'fresh_session' existed in the backend, so 4 of 5 intents 400'd at create,
+// which read as "no governed create path." These are the real backend keys.
+const HANDOFF_INTENTS = [
+  'continue_work',
+  'code_check',
+  'sandbox_testing',
+  'product_testing',
+  'sandbox_build',
+  'production_build',
+  'production_configure',
+  'design_review',
+  'bug_triage',
+  'doc_update',
+  'fresh_session',
+  'work_order',
+  'sprint',
+  'discontinue',
+] as const;
+
 export const tools: ToolDef[] = [
   {
     name: 'lsp_handoff_compose',
@@ -23,7 +47,7 @@ export const tools: ToolDef[] = [
         },
         intent: {
           type: 'string',
-          enum: ['continue', 'finish_and_ship', 'review_and_merge', 'fresh_session', 'discontinue_and_postmortem'],
+          enum: [...HANDOFF_INTENTS],
         },
         hints: {
           type: 'object',
@@ -52,7 +76,7 @@ export const tools: ToolDef[] = [
         changed_files: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, change_type: { type: 'string' }, note: { type: 'string' } }, required: ['path', 'change_type'] } },
         acceptance_criteria: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, text: { type: 'string' } }, required: ['id', 'text'] } },
         open_questions_md: { type: 'string' },
-        intent: { type: 'string', enum: ['continue', 'finish_and_ship', 'review_and_merge', 'fresh_session', 'discontinue_and_postmortem'] },
+        intent: { type: 'string', enum: [...HANDOFF_INTENTS] },
         recipient_type: { type: 'string', enum: ['user', 'agent'], description: 'Omit for share-link-only (no email)' },
         recipient_email: { type: 'string', description: 'Recipient email. Omit for share-link-only.' },
         recipient_user_email: { type: 'string' },

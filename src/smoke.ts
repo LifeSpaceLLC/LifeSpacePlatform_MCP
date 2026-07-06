@@ -38,6 +38,47 @@ for (const { service, run } of checks) {
   }
 }
 
+// -- ClaudeCode: Handoff end-to-end flow check (bug dfca61cf, 2026-07-06).
+// Reachability alone missed a real break: the MCP intent enum didn't match the
+// backend's ALL_INTENTS, so compose→create→send 400'd for 4 of 5 intents. This
+// exercises the full governed chain and asserts a share_url comes back.
+// Share-link-only (no recipient) → no Dispatch email fires. Creates one
+// disposable drafting packet per run.
+let handoffFlow: Result | null = null;
+if (SERVICES.handoff.deployed) {
+  try {
+    // compose (skeleton) — proves the entry point responds
+    await call('handoff', '/v1/packets/compose', 'POST', {
+      repo_url: 'https://github.com/LifeSpaceLLC/LifeSpacePlatform',
+      branch: 'main',
+      intent: 'fresh_session',
+    });
+    // create — the intent MUST be a real backend ALL_INTENTS value or this 400s
+    const created = (await call('handoff', '/v1/packets', 'POST', {
+      repo_url: 'https://github.com/LifeSpaceLLC/LifeSpacePlatform',
+      branch: 'main',
+      title: 'MCP smoke: compose→create→send',
+      summary_md: 'Disposable packet from the lsp-mcp smoke test. Safe to discard.',
+      intent: 'fresh_session',
+    })) as { packet?: { id?: string } };
+    const packetId = created?.packet?.id;
+    if (!packetId) throw new Error('create returned no packet.id');
+    // send — MUST return a share_url
+    const sent = (await call('handoff', `/v1/packets/${packetId}/send`, 'POST')) as {
+      share?: { share_url?: string };
+    };
+    const shareUrl = sent?.share?.share_url;
+    if (!shareUrl) throw new Error('send returned no share.share_url');
+    handoffFlow = { service: 'handoff', ok: true, detail: `share_url ${shareUrl}` };
+  } catch (err) {
+    handoffFlow = {
+      service: 'handoff',
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 const pad = (s: string, n: number) => s + ' '.repeat(Math.max(0, n - s.length));
 console.log('\nlsp-mcp smoke test');
 console.log('===================');
@@ -45,6 +86,12 @@ for (const r of results) {
   const mark = r.ok ? 'OK ' : 'FAIL';
   console.log(`${mark}  ${pad(r.service, 10)}  ${r.detail}`);
 }
-const passed = results.filter((r) => r.ok).length;
-console.log(`\n${passed}/${results.length} services reachable.\n`);
-process.exit(passed === results.length ? 0 : 1);
+if (handoffFlow) {
+  const mark = handoffFlow.ok ? 'OK ' : 'FAIL';
+  console.log(`${mark}  ${pad('handoff→flow', 12)}  ${handoffFlow.detail}`);
+}
+const flowChecks = handoffFlow ? [handoffFlow] : [];
+const allChecks = [...results, ...flowChecks];
+const passed = allChecks.filter((r) => r.ok).length;
+console.log(`\n${passed}/${allChecks.length} checks passed.\n`);
+process.exit(passed === allChecks.length ? 0 : 1);
