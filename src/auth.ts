@@ -101,7 +101,7 @@ function keychainGet(tenant: string): string | null {
   }
 }
 
-function saveRefresh(tenant: string, refreshToken: string): void {
+export function saveRefresh(tenant: string, refreshToken: string): void {
   const payload: Stored = { refresh_token: refreshToken, tenant_id: tenant };
   const json = JSON.stringify(payload);
   // PRIMARY: gitignored file, mode 600. Never prompts.

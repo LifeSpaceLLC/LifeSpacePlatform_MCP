@@ -28,6 +28,14 @@ import * as agent from './services/agent.js';
 import { errText } from './client.js';
 import type { ToolDef, ToolHandler } from './types.js';
 
+// -- ClaudeCode (2026-07-06): `lsp login` subcommand routing. When invoked as
+// `lsp-mcp login` (or `... auth login`), run the device-code login flow and exit
+// — do NOT start the stdio server. Any other invocation starts the server.
+if (process.argv.slice(2).includes('login')) {
+  const { login } = await import('./cli.js');
+  process.exit(await login());
+}
+
 const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture, canvas, calendar, assistant, listen, skills, agent];
 
 const allTools: ToolDef[] = modules.flatMap((m) => m.tools);
