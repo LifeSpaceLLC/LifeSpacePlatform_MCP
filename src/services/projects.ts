@@ -132,7 +132,8 @@ export const tools: ToolDef[] = [
       type: 'object',
       properties: {
         project_id: { type: 'string' },
-        id: { type: 'string' },
+        id: { type: 'string', description: 'Task id (alias: task_id).' },
+        task_id: { type: 'string', description: 'Alias for id — accepted because sibling tools (note_add) use task_id.' },
         title: { type: 'string' },
         description: { type: 'string' },
         status: { type: 'string', description: "Status id from project.status_defs, or built-in 'open'|'in_progress'|'done'|'cancelled'." },
@@ -331,11 +332,16 @@ export const handlers: Record<string, ToolHandler> = {
     return okText(await call('projects', `/v1/projects/${project_id}/tasks/${id}${q}`, 'GET'));
   },
   lsp_projects_task_update: async (args) => {
-    const { project_id, id, ...body } = args as Record<string, unknown> & {
+    // -- ClaudeCode: accept task_id as an alias for id — sibling tools (note_add)
+    // take task_id, so callers guess it here and got PATCH .../tasks/undefined.
+    const { project_id, id, task_id, ...body } = args as Record<string, unknown> & {
       project_id: string;
-      id: string;
+      id?: string;
+      task_id?: string;
     };
-    return okText(await call('projects', `/v1/projects/${project_id}/tasks/${id}`, 'PATCH', body));
+    const taskId = id ?? task_id;
+    if (!taskId) return okText({ error: 'id (or task_id) is required' });
+    return okText(await call('projects', `/v1/projects/${project_id}/tasks/${taskId}`, 'PATCH', body));
   },
   lsp_projects_note_add: async (args) => {
     const { project_id, ...body } = args as Record<string, unknown> & { project_id: string };
