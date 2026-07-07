@@ -25,6 +25,7 @@ import * as assistant from './services/assistant.js';
 import * as listen from './services/listen.js';
 import * as skills from './services/skills.js';
 import * as agent from './services/agent.js';
+import * as flow from './services/flow.js';
 import { errText } from './client.js';
 import type { ToolDef, ToolHandler } from './types.js';
 
@@ -36,7 +37,7 @@ if (process.argv.slice(2).includes('login')) {
   process.exit(await login());
 }
 
-const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture, canvas, calendar, assistant, listen, skills, agent];
+const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture, canvas, calendar, assistant, listen, skills, agent, flow];
 
 const allTools: ToolDef[] = modules.flatMap((m) => m.tools);
 const allHandlers: Record<string, ToolHandler> = Object.assign(

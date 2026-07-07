@@ -20,7 +20,8 @@ export type ServiceId =
   | 'assistant'
   | 'listen'
   | 'skills'
-  | 'agent';
+  | 'agent'
+  | 'flow';
 
 export interface ServiceConfig {
   url: string;
@@ -137,6 +138,15 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     url: process.env.LSP_AGENT_URL ?? 'https://agent.lifespace.com',
     personalEnvVar: 'AGENT_ADMIN_API_KEY',
     repoDir: 'Agent',
+    deployed: true,
+  },
+  // -- ClaudeCode (2026-07-06): Flow — n8n-style orchestration engine. Live at
+  // flow.lifespace.com (health 200). Override via LSP_FLOW_URL. Tool surface is
+  // the run/read/author verbs the Agent + test harness need to exercise flows.
+  flow: {
+    url: process.env.LSP_FLOW_URL ?? 'https://flow.lifespace.com',
+    personalEnvVar: 'FLOW_ADMIN_API_KEY',
+    repoDir: 'Flow',
     deployed: true,
   },
 };

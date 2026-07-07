@@ -15,11 +15,11 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_skills_search',
     description:
-      "Search the tenant's skill registry by trigger text. Use when the user says 'is there a skill for X', 'find a skill', or before writing a procedure that may already exist. Matches skill_key/name/trigger/description (ILIKE) and optional tag; active skills only.",
+      "Search the tenant's skill registry by trigger text. Use when the user says 'is there a skill for X', 'find a skill', or before writing a procedure that may already exist. Matches skill_key/name/trigger/description (ILIKE) and optional tag; active skills only. q supports % wildcards: 'cs-prod%' = starts-with, '%data%table%' = ordered contains; no % = plain contains.",
     inputSchema: {
       type: 'object',
       properties: {
-        q: { type: 'string', description: 'Search text matched against key, name, trigger, description.' },
+        q: { type: 'string', description: "Search text matched against key, name, trigger, description. Include % for wildcard patterns ('cs-prod%', '%data%table%')." },
         tag: { type: 'string', description: 'Filter to skills carrying this tag.' },
         limit: { type: 'number', description: 'Max results (default 20, max 100).' },
       },

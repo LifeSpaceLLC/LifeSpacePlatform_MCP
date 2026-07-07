@@ -28,13 +28,17 @@ export const tools: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        content_type: { type: 'string' },
-        source_url: { type: 'string' },
+        // -- ClaudeCode: MUST be `content_url` — the Library API (POST /v1/entries)
+        // requires `content_url`; the handler forwards args verbatim (no mapping),
+        // so the tool param name has to match the API field exactly. Was `source_url`,
+        // which 400'd every governed register call. (ticket 2ea2d2d0)
+        content_url: { type: 'string' },
+        content_type: { type: 'string', description: 'Optional — Library auto-detects from the URL if omitted.' },
         title: { type: 'string' },
         folder_id: { type: 'string' },
         metadata: { type: 'object', additionalProperties: true },
       },
-      required: ['content_type', 'source_url'],
+      required: ['content_url'],
     },
   },
   {
