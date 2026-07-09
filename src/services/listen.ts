@@ -15,12 +15,12 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_listen_register_source',
     description:
-      "Register a new inbound source. transport='webhook' (provider 'catch_hook' — returns a minted inbound_url anything can POST to) or transport='api_poll' (provider 'gmail' = mailbox poll [then call lsp_listen_connect_source]; 'http'/'rss' = poll a REST endpoint/feed). config carries preset settings (poll url, records_path, id_field, gmail label, etc.).",
+      "Register a new inbound source. transport='webhook' (provider 'catch_hook' — returns a minted inbound_url anything can POST to; provider 'inbound_email' — returns a minted inbound_address anything can EMAIL, via SendGrid Inbound Parse) or transport='api_poll' (provider 'gmail' = mailbox poll [then call lsp_listen_connect_source]; 'http'/'rss' = poll a REST endpoint/feed). config carries preset settings (poll url, records_path, id_field, gmail label, etc.).",
     inputSchema: {
       type: 'object',
       properties: {
         transport: { type: 'string', enum: ['webhook', 'api_poll'] },
-        provider: { type: 'string', enum: ['catch_hook', 'gmail', 'http', 'rss'] },
+        provider: { type: 'string', enum: ['catch_hook', 'inbound_email', 'gmail', 'http', 'rss'] },
         account_ref: { type: 'string', description: 'Which account/endpoint (e.g. mailbox email, a label).' },
         config: { type: 'object', description: 'Preset settings (url, records_path, id_field, timestamp_field, since_param, label, max_results).', additionalProperties: true },
         poll_interval_sec: { type: 'number', description: 'For api_poll: how often the scheduler polls.' },
