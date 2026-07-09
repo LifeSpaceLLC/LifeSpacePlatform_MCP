@@ -68,15 +68,18 @@ export interface MintedToken {
 
 /** Mint a short-TTL Trust access token for an SSO'd user. Trust RE-RESOLVES the
  *  user's role + modules for the connect app on every call — so revoking the
- *  user in Trust kills the session on the next mint (a 403 here). */
-export async function mintAccessToken(email: string, ttlSeconds: number): Promise<MintedToken> {
+ *  user in Trust kills the session on the next mint (a 403 here). `chosenTenantId`
+ *  is the tenant the user picked in the consent screen (order G1 security fix):
+ *  if it differs from their home tenant, Trust validates admin+subtree and
+ *  down-scopes to least-privilege at that tenant. Omit/home = home scope. */
+export async function mintAccessToken(email: string, ttlSeconds: number, chosenTenantId?: string): Promise<MintedToken> {
   const res = await fetch(`${TRUST_BASE}/v1/mint`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${mintKey()}`,
     },
-    body: JSON.stringify({ app_id: appId(), email, ttl_seconds: ttlSeconds }),
+    body: JSON.stringify({ app_id: appId(), email, ttl_seconds: ttlSeconds, chosen_tenant_id: chosenTenantId }),
   });
   if (res.status === 403) {
     throw new Error('access_denied: no role assignment for this user on the Connect app');
