@@ -19,7 +19,8 @@ import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 // the spec's 400 invalid_grant / 401 invalid_token instead of a generic 500.
 import { InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { sql, sha256, jsonb } from './db.js';
-import { ssoStartUrl, exchangeSsoCode, mintAccessToken, trustPublicKey } from './trust.js';
+import { ssoStartUrl, exchangeSsoCode, mintAccessToken, trustPublicKey, type TrustIdentity } from './trust.js';
+import { getSubtreeTree, getSubtreeIds, renderConsent, renderMessage } from './tenants.js';
 
 const ACCESS_TTL_SECONDS = 60 * 60; // 1h — bounds a revoked user's window (spec check #5)
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d rolling
@@ -46,6 +47,26 @@ const pending = new Map<string, PendingAuthorization>();
 function sweepPending(): void {
   const now = Date.now();
   for (const [k, v] of pending) if (v.expiresAt < now) pending.delete(k);
+}
+
+// -- ClaudeCode (2026-07-09, G1 security fix): between SSO and the auth code, an
+// admin picks a tenant. This holds the (verified, server-side) identity + the
+// originating client request while the consent page is shown. Keyed by an opaque
+// consentId carried in the form; identity is NEVER trusted from the client.
+interface ConsentPending {
+  clientId: string;
+  redirectUri: string;
+  state?: string;
+  codeChallenge: string;
+  resource?: string;
+  identity: TrustIdentity;
+  homeTenant: string;
+  expiresAt: number;
+}
+const consentPending = new Map<string, ConsentPending>();
+function sweepConsent(): void {
+  const now = Date.now();
+  for (const [k, v] of consentPending) if (v.expiresAt < now) consentPending.delete(k);
 }
 
 function connectBaseUrl(): string {
@@ -165,7 +186,7 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       return;
     }
 
-    let identity;
+    let identity: TrustIdentity;
     try {
       identity = await exchangeSsoCode(ssoCode);
     } catch {
@@ -173,20 +194,92 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       return;
     }
 
-    // Issue our single-use authorization code, carrying the verified identity.
+    // -- ClaudeCode (2026-07-09, G1 security fix): tenant consent. A plain
+    // role=user is PINNED to their own tenant (no picker) — issue the code
+    // straight away. An admin gets the subtree picker; the auth code is issued
+    // only after they choose (handleConsent), so the token is scoped to the
+    // CHOSEN tenant instead of silently minting at the role's home (root).
+    const homeTenant = identity.tenant_id || '';
+    const isAdmin = identity.role === 'admin' || identity.role === 'super_admin';
+    if (!isAdmin) {
+      await this.issueCodeAndRedirect(res, pend, identity, homeTenant);
+      return;
+    }
+
+    sweepConsent();
+    const consentId = crypto.randomBytes(32).toString('hex');
+    consentPending.set(consentId, {
+      clientId: pend.clientId,
+      redirectUri: pend.redirectUri,
+      state: pend.state,
+      codeChallenge: pend.codeChallenge,
+      resource: pend.resource,
+      identity,
+      homeTenant,
+      expiresAt: Date.now() + PENDING_TTL_MS,
+    });
+    const tree = await getSubtreeTree(homeTenant);
+    res.type('html').send(renderConsent(consentId, identity.email, homeTenant, tree));
+  }
+
+  // Step 2b — the admin submitted the tenant picker. Validate the chosen tenant
+  // is inside their subtree, then issue the auth code scoped to it.
+  async handleConsent(req: Request, res: Response): Promise<void> {
+    sweepConsent();
+    const body = (req.body ?? {}) as Record<string, string>;
+    const consentId = typeof body.consent === 'string' ? body.consent : '';
+    const chosen = typeof body.tenant_id === 'string' ? body.tenant_id.trim() : '';
+    const cp = consentId ? consentPending.get(consentId) : undefined;
+    if (cp) consentPending.delete(consentId);
+    if (!cp || cp.expiresAt < Date.now()) {
+      res.status(400).type('html').send(renderMessage('Session expired', 'Your sign-in window closed. Please retry the connection.'));
+      return;
+    }
+
+    // The chosen tenant must be the home tenant or a descendant of it (belt —
+    // Trust re-validates at mint). Never trust an arbitrary posted tenant id.
+    let chosenTenant = cp.homeTenant;
+    if (chosen && chosen !== cp.homeTenant) {
+      const subtree = await getSubtreeIds(cp.homeTenant);
+      if (!subtree.has(chosen)) {
+        res.status(403).type('html').send(renderMessage('Not allowed', 'You can only connect to a tenant inside your own subtree.'));
+        return;
+      }
+      chosenTenant = chosen;
+    }
+
+    const pend: PendingAuthorization = {
+      clientId: cp.clientId,
+      redirectUri: cp.redirectUri,
+      state: cp.state,
+      codeChallenge: cp.codeChallenge,
+      resource: cp.resource,
+      expiresAt: Date.now() + AUTH_CODE_TTL_MS,
+    };
+    await this.issueCodeAndRedirect(res, pend, cp.identity, chosenTenant);
+  }
+
+  // Issue a single-use auth code carrying the verified identity + the CHOSEN
+  // tenant, then 302 back to the MCP client. tenant_id here is the tenant the
+  // token will be scoped to (home for users, picked for admins).
+  private async issueCodeAndRedirect(
+    res: Response,
+    pend: PendingAuthorization,
+    identity: TrustIdentity,
+    chosenTenant: string,
+  ): Promise<void> {
     const code = crypto.randomBytes(32).toString('hex');
     await sql`
       INSERT INTO ls_connect_codes (
         code_hash, client_id, tenant_id, user_id, user_email, role, modules,
         pkce_challenge, redirect_uri, client_state, resource, expires_at
       ) VALUES (
-        ${sha256(code)}, ${pend.clientId}, ${identity.tenant_id || null}, ${identity.email},
+        ${sha256(code)}, ${pend.clientId}, ${chosenTenant || null}, ${identity.email},
         ${identity.email}, ${identity.role}, ${jsonb(identity.modules ?? [])},
         ${pend.codeChallenge}, ${pend.redirectUri}, ${pend.state ?? null}, ${pend.resource ?? null},
         ${new Date(Date.now() + AUTH_CODE_TTL_MS)}
       )
     `;
-
     const url = new URL(pend.redirectUri);
     url.searchParams.set('code', code);
     if (pend.state) url.searchParams.set('state', pend.state);
@@ -218,7 +311,9 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     // Single-use: burn it now.
     await sql`UPDATE ls_connect_codes SET used = true WHERE code_hash = ${codeHash}`;
 
-    const minted = await mintAccessToken(r.user_email as string, ACCESS_TTL_SECONDS);
+    // The code row's tenant_id is the tenant the user picked at consent — mint
+    // scoped to it (Trust down-scopes if it's a descendant of their home).
+    const minted = await mintAccessToken(r.user_email as string, ACCESS_TTL_SECONDS, r.tenant_id as string);
     const refresh = await this.issueRefreshToken(client.client_id, {
       userId: r.user_id as string,
       email: r.user_email as string,
@@ -249,8 +344,10 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     if (new Date(r.expires_at).getTime() < Date.now()) throw new InvalidGrantError('refresh token expired');
 
     // Re-mint from Trust — role/modules are re-resolved, so a revoked user hits
-    // a 403 here and the session dies (spec acceptance check #5).
-    const minted = await mintAccessToken(r.user_email as string, ACCESS_TTL_SECONDS);
+    // a 403 here and the session dies (spec acceptance check #5). Re-mint for the
+    // SAME chosen tenant stored on the refresh row — never silently re-widen to
+    // the user's home tenant (order G1 security fix).
+    const minted = await mintAccessToken(r.user_email as string, ACCESS_TTL_SECONDS, r.tenant_id as string);
 
     // Rotate the refresh token (30d rolling): burn the old, issue a new one.
     await sql`UPDATE ls_connect_tokens SET revoked_at = now() WHERE token_hash = ${tokenHash}`;

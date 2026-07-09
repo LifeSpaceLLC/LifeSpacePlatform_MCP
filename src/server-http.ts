@@ -64,10 +64,19 @@ app.use(
 );
 
 // -- ClaudeCode: the Trust SSO return leg. Reads the connect_txn cookie, closes
-// the loop, and issues our authorization code.
+// the loop, and issues our authorization code (admins get the tenant picker).
 app.get('/oauth/trust/callback', (req, res) => {
   provider.handleTrustCallback(req, res).catch(() => {
     if (!res.headersSent) res.status(500).send('Sign-in failed.');
+  });
+});
+
+// -- ClaudeCode (2026-07-09, G1 security fix): the admin tenant-picker submit.
+// Validates the chosen tenant is in the caller's subtree, then issues the auth
+// code scoped to it.
+app.post('/oauth/consent', express.urlencoded({ extended: false }), (req, res) => {
+  provider.handleConsent(req, res).catch(() => {
+    if (!res.headersSent) res.status(500).send('Consent failed.');
   });
 });
 
