@@ -1,7 +1,7 @@
 {
   "name": "@lifespace/mcp",
-  "version": "0.1.1",
-  "description": "LifeSpace Platform MCP — stdio server wrapping live LSP services as first-class MCP tools for Claude Code.",
+  "version": "0.2.0",
+  "description": "LifeSpace Platform MCP — stdio server (Claude Code) + Streamable-HTTP remote server (LifeSpace Connect) wrapping live LSP services as first-class MCP tools.",
   "type": "module",
   "main": "dist/server.js",
   "bin": {
@@ -10,6 +10,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/server.ts",
+    "dev:http": "tsx src/server-http.ts",
+    "start:http": "node dist/server-http.js",
+    "apply-schema": "tsx src/http/apply-schema.ts",
     "smoke": "tsx src/smoke.ts",
     "prepare": "tsc"
   },
@@ -24,9 +27,17 @@
     "url": "git+https://github.com/LifeSpaceLLC/LifeSpacePlatform_MCP.git"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^5.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "postgres": "^3.4.7"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20.11.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0"

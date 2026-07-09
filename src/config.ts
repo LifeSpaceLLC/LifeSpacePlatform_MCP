@@ -2,6 +2,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { currentBearer } from './auth.js';
+import { currentRequestBearer } from './request-context.js';
 
 export type ServiceId =
   | 'dispatch'
@@ -194,6 +195,11 @@ function loadRepoEnv(repoDir: string): Record<string, string> {
  * 3. Per-service admin API key read from {LSP_REPO_PATH}/{Service}/.env (personal mode)
  */
 export function authFor(service: ServiceId): string {
+  // -- ClaudeCode (2026-07-08): HTTP transport (Connect) — the per-request Trust
+  // JWT wins over everything. One process, many tenants: each downstream call is
+  // authed as the user who made the /mcp request. Empty in stdio → falls through.
+  const reqBearer = currentRequestBearer();
+  if (reqBearer) return reqBearer;
   // -- ClaudeCode (2026-07-06): Trust Auth v2 — in token mode, prefer the
   // silent-refresh-managed bearer (live access token, falling back to the raw
   // LSP_TOKEN). currentBearer() never returns null while LSP_TOKEN is set.
