@@ -15,6 +15,9 @@ import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprot
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { OAuthClientInformationFull, OAuthTokens, OAuthTokenRevocationRequest } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
+// -- ClaudeCode (2026-07-09): typed OAuth errors so the SDK token handler emits
+// the spec's 400 invalid_grant / 401 invalid_token instead of a generic 500.
+import { InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { sql, sha256, jsonb } from './db.js';
 import { ssoStartUrl, exchangeSsoCode, mintAccessToken, trustPublicKey } from './trust.js';
 
@@ -196,7 +199,7 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
   ): Promise<string> {
     const rows = await sql`SELECT pkce_challenge FROM ls_connect_codes WHERE code_hash = ${sha256(authorizationCode)}`;
     const r = rows[0];
-    if (!r) throw new Error('invalid_grant: unknown authorization code');
+    if (!r) throw new InvalidGrantError('unknown authorization code');
     return r.pkce_challenge as string;
   }
 
@@ -207,10 +210,10 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     const codeHash = sha256(authorizationCode);
     const rows = await sql`SELECT * FROM ls_connect_codes WHERE code_hash = ${codeHash}`;
     const r = rows[0];
-    if (!r) throw new Error('invalid_grant: unknown authorization code');
-    if (r.client_id !== client.client_id) throw new Error('invalid_grant: client mismatch');
-    if (r.used) throw new Error('invalid_grant: authorization code already used');
-    if (new Date(r.expires_at).getTime() < Date.now()) throw new Error('invalid_grant: authorization code expired');
+    if (!r) throw new InvalidGrantError('unknown authorization code');
+    if (r.client_id !== client.client_id) throw new InvalidGrantError('client mismatch');
+    if (r.used) throw new InvalidGrantError('authorization code already used');
+    if (new Date(r.expires_at).getTime() < Date.now()) throw new InvalidGrantError('authorization code expired');
 
     // Single-use: burn it now.
     await sql`UPDATE ls_connect_codes SET used = true WHERE code_hash = ${codeHash}`;
@@ -240,10 +243,10 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     const tokenHash = sha256(refreshToken);
     const rows = await sql`SELECT * FROM ls_connect_tokens WHERE token_hash = ${tokenHash}`;
     const r = rows[0];
-    if (!r) throw new Error('invalid_grant: unknown refresh token');
-    if (r.client_id !== client.client_id) throw new Error('invalid_grant: client mismatch');
-    if (r.revoked_at) throw new Error('invalid_grant: refresh token revoked');
-    if (new Date(r.expires_at).getTime() < Date.now()) throw new Error('invalid_grant: refresh token expired');
+    if (!r) throw new InvalidGrantError('unknown refresh token');
+    if (r.client_id !== client.client_id) throw new InvalidGrantError('client mismatch');
+    if (r.revoked_at) throw new InvalidGrantError('refresh token revoked');
+    if (new Date(r.expires_at).getTime() < Date.now()) throw new InvalidGrantError('refresh token expired');
 
     // Re-mint from Trust — role/modules are re-resolved, so a revoked user hits
     // a 403 here and the session dies (spec acceptance check #5).
@@ -273,7 +276,7 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     try {
       claims = jwt.verify(token, trustPublicKey(), { algorithms: ['RS256'] }) as Record<string, unknown>;
     } catch {
-      throw new Error('invalid_token');
+      throw new InvalidTokenError('invalid or expired access token');
     }
     return {
       token,
