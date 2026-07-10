@@ -36,6 +36,7 @@ import {
 } from './http/tools.js';
 import { requestContext } from './request-context.js';
 import { errText } from './client.js';
+import { renderStartPage, normalizeApp } from './http/start-page.js';
 
 const CONNECT_BASE_URL = process.env.CONNECT_BASE_URL ?? 'https://connect.lifespace.com';
 const issuerUrl = new URL(CONNECT_BASE_URL);
@@ -47,6 +48,13 @@ app.set('trust proxy', true); // Railway terminates TLS in front of us
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'lifespace-connect', transport: 'streamable-http' });
+});
+
+// -- ClaudeCode (order G4): the hosted onboarding start page — where invite
+// emails land. Public + tenant-safe (static instructions, zero secrets).
+// ?app=cowork|claude-desktop|claude-code|codex preselects a tab.
+app.get('/start', (req, res) => {
+  res.type('html').send(renderStartPage(normalizeApp(req.query.app)));
 });
 
 // -- ClaudeCode: OAuth 2.1 authorization-server + protected-resource metadata,
