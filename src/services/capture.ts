@@ -67,6 +67,32 @@ export const tools: ToolDef[] = [
       required: ['id'],
     },
   },
+  {
+    // -- ClaudeCode (2026-07-12): the receipt seam for the route-inbound skill.
+    // Stamps a handled-receipt on a Capture item — what it became, by whom.
+    // Maps to POST /v1/capture/:id/receipts (Inbound D3 endpoint, reused, not new).
+    name: 'lsp_capture_stamp_receipt',
+    description:
+      "Stamp a handled-receipt on a Capture item — record what it BECAME after you acted on it (a ticket, task, agent job, Library entry, or a dismissal). CALL after the route-inbound skill (or any agent) turns a Capture item into something. Marks the item handled (handled_at/handled_by); action='dismiss' also discards it. Canonical actions: ticket | task | agent | library | dismiss | route | other. Returns the receipt + the item's new handled state.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The Capture item id to stamp.' },
+        action: {
+          type: 'string',
+          enum: ['ticket', 'task', 'agent', 'library', 'dismiss', 'route', 'other'],
+          description: 'What the item became. "dismiss" also discards the item.',
+        },
+        outcome_kind: { type: 'string', description: 'Module/type that received it, e.g. projects_task, library_entry, ticket.' },
+        outcome_id: { type: 'string', description: 'Id of the thing it became.' },
+        outcome_url: { type: 'string', description: 'Deep link to the outcome, if one exists.' },
+        summary: { type: 'string', description: 'One plain-English line, e.g. "→ Projects task: follow up Tuesday".' },
+        actor_kind: { type: 'string', enum: ['agent', 'team_member'], description: 'Defaults to "agent" for MCP callers.' },
+        actor: { type: 'string', description: 'Who acted, e.g. "route-inbound". Defaults to the caller identity.' },
+      },
+      required: ['id', 'action'],
+    },
+  },
 ];
 
 export const handlers: Record<string, ToolHandler> = {
@@ -97,5 +123,12 @@ export const handlers: Record<string, ToolHandler> = {
     const { id } = args as { id: string };
     await call('capture', `/v1/capture/${id}`, 'DELETE');
     return okText({ ok: true, id, deleted: true });
+  },
+  lsp_capture_stamp_receipt: async (args) => {
+    const { id, ...body } = args as Record<string, unknown>;
+    // actor_kind defaults to 'agent' for MCP callers; the service fills actor
+    // from the token identity when omitted.
+    if (!body.actor_kind) body.actor_kind = 'agent';
+    return okText(await call('capture', `/v1/capture/${id}/receipts`, 'POST', body));
   },
 };
