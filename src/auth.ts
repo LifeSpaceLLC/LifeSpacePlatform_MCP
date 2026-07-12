@@ -48,6 +48,18 @@ export function isTokenMode(): boolean {
   return !!process.env.LSP_TOKEN;
 }
 
+// -- ClaudeCode (2026-07-11, Execute B3-blocker-3): SINGLE-REFRESHER RULE.
+// Only the Execute WORKER may read/refresh/write ~/.lsp/<tenant>.json. A
+// per-run MCP server (spawned by the worker for one `claude -p`) is given a
+// token via LSP_TOKEN and set LSP_NO_REFRESH=1 — it NEVER touches the store and
+// NEVER refreshes. If its token expires mid-run it just fails that call cleanly;
+// the worker refreshes and the NEXT run gets a fresh token. This kills the
+// multi-process rotation race that cross-stomped the store (session drift
+// 542330f7→8d43ee3f, 2026-07-11). See [[reference_electron_worker_runtime_gotchas]].
+export function noRefreshMode(): boolean {
+  return process.env.LSP_NO_REFRESH === '1';
+}
+
 function decodeClaims(jwt: string): Record<string, any> | null {
   try {
     return JSON.parse(Buffer.from(jwt.split('.')[1] ?? '', 'base64').toString());
@@ -163,6 +175,9 @@ let readyPromise: Promise<void> | null = null;
  *  every failure leaves the static LSP_TOKEN path intact (back-compat). */
 export function ensureReady(): Promise<void> {
   if (!isTokenMode()) return Promise.resolve();
+  // No-refresh (per-run worker MCP): use LSP_TOKEN as-is; never read/migrate/
+  // write the store. Single-refresher rule — the worker owns ~/.lsp.
+  if (noRefreshMode()) return Promise.resolve();
   if (readyPromise) return readyPromise;
   readyPromise = (async () => {
     try {
@@ -218,6 +233,9 @@ export function currentBearer(): string | null {
  *  the NEW refresh token before returning so a crash can't strand us on a burned
  *  token mid-swap. Returns false if we have no refresh or Trust rejects it. */
 export async function refreshAccessToken(): Promise<boolean> {
+  // Per-run worker MCP never refreshes — a mid-run 401 fails the call cleanly
+  // (the worker is the sole refresher; the next run gets a fresh token).
+  if (noRefreshMode()) return false;
   if (!mem.refreshToken || !mem.tenantId) return false;
   try {
     const r = await trustPost('/auth/renew', { refresh_token: mem.refreshToken });
