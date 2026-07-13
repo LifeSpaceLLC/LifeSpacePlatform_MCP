@@ -24,6 +24,16 @@ export async function call(
       Authorization: `Bearer ${authFor(service)}`,
       ...extraHeaders,
     };
+    // -- ClaudeCode (F3 2026-07-13): correlation-id spine. When a run-scoped
+    // session is launched to service an inbound item (the Agent worker passes the
+    // task's trace as LSP_CORRELATION_ID), thread it onto EVERY lsp_* write so the
+    // resulting Dispatch send / Capture receipt / etc. joins the same pipeline
+    // trace (listen.record.* → capture.item.* → agent.task.* → dispatch.message.*).
+    // An explicit per-call X-Correlation-Id wins; interactive sessions (env unset)
+    // are unaffected.
+    const corr = process.env.LSP_CORRELATION_ID;
+    const alreadySet = Object.keys(headers).some((h) => h.toLowerCase() === 'x-correlation-id');
+    if (corr && !alreadySet) headers['X-Correlation-Id'] = corr;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     return fetch(url, {
       method,
