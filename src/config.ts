@@ -22,7 +22,8 @@ export type ServiceId =
   | 'listen'
   | 'skills'
   | 'agent'
-  | 'flow';
+  | 'flow'
+  | 'tickets';
 
 export interface ServiceConfig {
   url: string;
@@ -148,6 +149,15 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     url: process.env.LSP_FLOW_URL ?? 'https://flow.lifespace.com',
     personalEnvVar: 'FLOW_ADMIN_API_KEY',
     repoDir: 'Flow',
+    deployed: true,
+  },
+  // -- ClaudeCode (2026-07-14): Tickets — AI-triaged support queue. Custom domain
+  // tickets.lifespace.com cert still PENDING, so the railway URL is the default.
+  // Override via LSP_TICKETS_URL once the cert lands.
+  tickets: {
+    url: process.env.LSP_TICKETS_URL ?? 'https://lifespace-tickets-production.up.railway.app',
+    personalEnvVar: 'TICKETS_ADMIN_API_KEY',
+    repoDir: 'Tickets',
     deployed: true,
   },
 };

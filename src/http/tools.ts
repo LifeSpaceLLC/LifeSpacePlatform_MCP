@@ -21,6 +21,7 @@ import * as listen from '../services/listen.js';
 import * as skills from '../services/skills.js';
 import * as agent from '../services/agent.js';
 import * as flow from '../services/flow.js';
+import * as tickets from '../services/tickets.js';
 import type { ToolDef, ToolHandler } from '../types.js';
 
 // -- ClaudeCode: (module id, tools, handlers). The id MUST match the module id
@@ -45,6 +46,7 @@ const MODULES: Array<{ id: string; mod: { tools: ToolDef[]; handlers: Record<str
   { id: 'skills', mod: skills },
   { id: 'agent', mod: agent },
   { id: 'flow', mod: flow },
+  { id: 'tickets', mod: tickets },
 ];
 
 export const allTools: ToolDef[] = MODULES.flatMap((m) => m.mod.tools);
