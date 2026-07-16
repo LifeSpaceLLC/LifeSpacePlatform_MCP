@@ -15,13 +15,14 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_skills_search',
     description:
-      "Search the tenant's skill registry by trigger text. Use when the user says 'is there a skill for X', 'find a skill', or before writing a procedure that may already exist. Matches skill_key/name/trigger/description (ILIKE) and optional tag; active skills only. q supports % wildcards: 'cs-prod%' = starts-with, '%data%table%' = ordered contains; no % = plain contains. Response includes total (full match count) and has_more; when has_more=true, paginate (raise limit) before concluding a skill is absent — a partial page is NOT the whole match set.",
+      "Search the tenant's skill registry by trigger text. Use when the user says 'is there a skill for X', 'find a skill', or before writing a procedure that may already exist. Matches skill_key/name/trigger/description (ILIKE) and optional tag; active skills only. Defaults to THIS tenant's own skills; set include_inherited=true to also search ancestor tenants — inherited skills appear only when include_inherited=true and only if flagged shared by their owner (each such row carries inherited=true + origin_tenant_id). q supports % wildcards: 'cs-prod%' = starts-with, '%data%table%' = ordered contains; no % = plain contains. Response includes total (full match count) and has_more; when has_more=true, paginate (raise limit) before concluding a skill is absent — a partial page is NOT the whole match set.",
     inputSchema: {
       type: 'object',
       properties: {
         q: { type: 'string', description: "Search text matched against key, name, trigger, description. Include % for wildcard patterns ('cs-prod%', '%data%table%')." },
         tag: { type: 'string', description: 'Filter to skills carrying this tag.' },
         limit: { type: 'number', description: 'Max results (default 200, max 500).' },
+        include_inherited: { type: 'boolean', description: 'Also search ancestor tenants. Inherited skills appear only when true AND only if their owner flagged them shared. Default false (own tenant only).' },
       },
     },
   },
@@ -76,7 +77,7 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_skills_list',
     description:
-      "List the tenant's skills (summary rows, no bodies) — the caller tenant's own skills MERGED with every ancestor tenant's (nearest wins). Filter by status (draft|active|archived) or tag. Response includes total (full merged count) and has_more; when has_more=true, paginate with offset (or raise limit) to see the whole catalog before concluding a skill isn't present — the default page is NOT necessarily the full registry.",
+      "List the tenant's skills (summary rows, no bodies). Defaults to THIS tenant's own skills; set include_inherited=true to also list skills inherited from ancestor tenants (nearest wins on key collisions). Inherited skills appear only when include_inherited=true and only if flagged shared by their owner — each such row carries inherited=true + origin_tenant_id. Every row carries shared (whether THIS tenant shares it downward). Filter by status (draft|active|archived) or tag. Response includes total (full count) and has_more; when has_more=true, paginate with offset (or raise limit) to see the whole catalog before concluding a skill isn't present — the default page is NOT necessarily the full registry.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -84,6 +85,7 @@ export const tools: ToolDef[] = [
         tag: { type: 'string' },
         limit: { type: 'number', description: 'Max results (default 200, max 500).' },
         offset: { type: 'number', description: 'Pagination offset; combine with has_more from the response.' },
+        include_inherited: { type: 'boolean', description: 'Also list skills inherited from ancestor tenants. They appear only when true AND only if their owner flagged them shared. Default false (own tenant only).' },
       },
     },
   },
@@ -97,11 +99,12 @@ function splitRef(ref: string): { key: string; version?: string } {
 
 export const handlers: Record<string, ToolHandler> = {
   lsp_skills_search: async (args) => {
-    const { q, tag, limit } = args as { q?: string; tag?: string; limit?: number };
+    const { q, tag, limit, include_inherited } = args as { q?: string; tag?: string; limit?: number; include_inherited?: boolean };
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     if (tag) params.set('tag', tag);
     if (limit) params.set('limit', String(limit));
+    if (include_inherited) params.set('include_inherited', 'true');
     return okText(await call('skills', `/v1/search?${params.toString()}`, 'GET'));
   },
   lsp_skills_get: async (args) => {
@@ -127,12 +130,13 @@ export const handlers: Record<string, ToolHandler> = {
     return okText(await call('skills', `/v1/skills/${encodeURIComponent(skill_key)}/publish`, 'POST', { change_note }));
   },
   lsp_skills_list: async (args) => {
-    const { status, tag, limit, offset } = args as { status?: string; tag?: string; limit?: number; offset?: number };
+    const { status, tag, limit, offset, include_inherited } = args as { status?: string; tag?: string; limit?: number; offset?: number; include_inherited?: boolean };
     const params = new URLSearchParams();
     if (status) params.set('status', status);
     if (tag) params.set('tag', tag);
     if (limit) params.set('limit', String(limit));
     if (offset) params.set('offset', String(offset));
+    if (include_inherited) params.set('include_inherited', 'true');
     const qs = params.toString();
     return okText(await call('skills', `/v1/skills${qs ? `?${qs}` : ''}`, 'GET'));
   },
