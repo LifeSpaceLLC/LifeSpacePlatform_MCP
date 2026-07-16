@@ -15,13 +15,13 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_skills_search',
     description:
-      "Search the tenant's skill registry by trigger text. Use when the user says 'is there a skill for X', 'find a skill', or before writing a procedure that may already exist. Matches skill_key/name/trigger/description (ILIKE) and optional tag; active skills only. q supports % wildcards: 'cs-prod%' = starts-with, '%data%table%' = ordered contains; no % = plain contains.",
+      "Search the tenant's skill registry by trigger text. Use when the user says 'is there a skill for X', 'find a skill', or before writing a procedure that may already exist. Matches skill_key/name/trigger/description (ILIKE) and optional tag; active skills only. q supports % wildcards: 'cs-prod%' = starts-with, '%data%table%' = ordered contains; no % = plain contains. Response includes total (full match count) and has_more; when has_more=true, paginate (raise limit) before concluding a skill is absent — a partial page is NOT the whole match set.",
     inputSchema: {
       type: 'object',
       properties: {
         q: { type: 'string', description: "Search text matched against key, name, trigger, description. Include % for wildcard patterns ('cs-prod%', '%data%table%')." },
         tag: { type: 'string', description: 'Filter to skills carrying this tag.' },
-        limit: { type: 'number', description: 'Max results (default 20, max 100).' },
+        limit: { type: 'number', description: 'Max results (default 200, max 500).' },
       },
     },
   },
@@ -76,14 +76,14 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_skills_list',
     description:
-      'List the tenant\'s skills (summary rows, no bodies). Filter by status (draft|active|archived) or tag.',
+      "List the tenant's skills (summary rows, no bodies) — the caller tenant's own skills MERGED with every ancestor tenant's (nearest wins). Filter by status (draft|active|archived) or tag. Response includes total (full merged count) and has_more; when has_more=true, paginate with offset (or raise limit) to see the whole catalog before concluding a skill isn't present — the default page is NOT necessarily the full registry.",
     inputSchema: {
       type: 'object',
       properties: {
         status: { type: 'string', enum: ['draft', 'active', 'archived'] },
         tag: { type: 'string' },
-        limit: { type: 'number' },
-        offset: { type: 'number' },
+        limit: { type: 'number', description: 'Max results (default 200, max 500).' },
+        offset: { type: 'number', description: 'Pagination offset; combine with has_more from the response.' },
       },
     },
   },
