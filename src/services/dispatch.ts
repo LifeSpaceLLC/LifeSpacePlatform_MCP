@@ -55,7 +55,7 @@ export const tools: ToolDef[] = [
         config: {
           type: 'object',
           description:
-            "Channel-specific optional config. Email: { subject, fromEmail?, fromName? }. Pushover: { title?, priority?, sound?, url?, url_title? }.",
+            "Channel-specific optional config. Email: { subject, fromEmail?, fromName?, replyTo? } — fromEmail must be a SendGrid-verified sender; fromName sets the display name; replyTo (email string or {email,name}) routes replies elsewhere and always beats the tenant's stored default. Pushover: { title?, priority?, sound?, url?, url_title? }.",
           additionalProperties: true,
         },
       },
