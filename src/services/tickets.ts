@@ -74,6 +74,29 @@ export const tools: ToolDef[] = [
         submitter_email: { type: 'string', description: "The requester's email — they receive public replies." },
         submitter_name: { type: 'string' },
         tags: { type: 'array', items: { type: 'string' } },
+        customer_label: {
+          type: 'string',
+          description:
+            "Free-text 'who is this for' label — the customer/account/system this ticket belongs to (e.g. 'Realcomm', 'CS-Designer', 'Internal'). Shows as a chip in the queue. Omit for internal/unlabeled tickets.",
+        },
+        links: {
+          type: 'array',
+          description:
+            'Typed links to other records this ticket relates to (label-only for now — no navigation). Use to stamp which customer/project/app/site/tenant this concerns.',
+          items: {
+            type: 'object',
+            properties: {
+              kind: {
+                type: 'string',
+                enum: ['customer', 'project', 'app', 'site', 'tenant', 'other'],
+                description: 'What kind of record this links to. Unknown kinds are stored as "other".',
+              },
+              ref_id: { type: 'string', description: 'Optional id of the linked record (opaque — no cross-module lookup yet).' },
+              label: { type: 'string', description: 'Human-readable label shown for the link (required).' },
+            },
+            required: ['kind', 'label'],
+          },
+        },
       },
       required: ['subject', 'body_md'],
     },
