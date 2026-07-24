@@ -73,6 +73,16 @@ export const tools: ToolDef[] = [
         priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'], description: 'Default normal.' },
         submitter_email: { type: 'string', description: "The requester's email — they receive public replies." },
         submitter_name: { type: 'string' },
+        assignee: {
+          type: 'string',
+          description:
+            "Who should own this ticket — an email address for a person, or an agent id. Set it whenever you know who is picking it up: the owner is emailed as soon as the ticket lands. Leave it out and the ticket arrives unassigned and only the person who raised it is told.",
+        },
+        assignee_type: {
+          type: 'string',
+          enum: ['human', 'ai'],
+          description: "Who the assignee is. Defaults to 'human' when an assignee is given.",
+        },
         tags: { type: 'array', items: { type: 'string' } },
         customer_label: {
           type: 'string',
