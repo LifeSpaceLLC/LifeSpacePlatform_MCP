@@ -23,7 +23,8 @@ export type ServiceId =
   | 'skills'
   | 'agent'
   | 'flow'
-  | 'tickets';
+  | 'tickets'
+  | 'site';
 
 export interface ServiceConfig {
   url: string;
@@ -158,6 +159,15 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     url: process.env.LSP_TICKETS_URL ?? 'https://lifespace-tickets-production.up.railway.app',
     personalEnvVar: 'TICKETS_ADMIN_API_KEY',
     repoDir: 'Tickets',
+    deployed: true,
+  },
+  // -- ClaudeCode (2026-07-24): Site — registry of the web surfaces the platform
+  // can inspect, annotate and edit. Custom domain site.lifespace.com verified
+  // live 2026-07-24 (cert valid). Override via LSP_SITE_URL.
+  site: {
+    url: process.env.LSP_SITE_URL ?? 'https://site.lifespace.com',
+    personalEnvVar: 'SITE_ADMIN_API_KEY',
+    repoDir: 'Site',
     deployed: true,
   },
 };
