@@ -20,7 +20,8 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_tickets_list',
     description:
-      "List the tenant's support ticket queue. Use when the user says 'what tickets are open', 'anything waiting on me', 'flush the ticket queue', or before working support. Tickets are auto-triaged on arrival, so each carries an AI-written subject + one-line summary (ai_subject/ai_summary) — read those, not the raw email subject, which is often useless ('Notification', 'Fwd: …'). Filter by state to find work: 'open' = needs a human, 'escalated' = needs attention now, 'waiting_customer' = parked on a reply.",
+      // ClaudeCode 2026-07-30 08:27 AM PDT
+      "List the tenant's support ticket queue. Use when the user says 'what tickets are open', 'anything waiting on me', 'flush the ticket queue', or before working support. Tickets are auto-triaged on arrival, so each carries an AI-written subject + one-line summary (ai_subject/ai_summary) — treat those as low-confidence hints, useful for orientation only when the raw email subject is useless ('Notification', 'Fwd: …'); identify the actual issue from the structured payload (custom_fields, links, body), never from the summary alone. Filter by state to find work: 'open' = needs a human, 'escalated' = needs attention now, 'waiting_customer' = parked on a reply.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -50,7 +51,8 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_tickets_get',
     description:
-      "Fetch one ticket. Set with_messages=true to get the whole conversation thread (public replies + internal notes, including AI triage notes). The ticket carries both the RAW email (subject/body_md — audit truth) and the AI-distilled versions (ai_subject/ai_summary/body_essence). Read body_essence to see what the person actually said with signatures, disclaimers and quoted history stripped; fall back to body_md if it's null.",
+      // ClaudeCode 2026-07-30 08:27 AM PDT
+      "Fetch one ticket. Set with_messages=true to get the whole conversation thread (public replies + internal notes, including AI triage notes). The ticket carries both the RAW email (subject/body_md — audit truth) and the AI-distilled versions (ai_subject/ai_summary/body_essence). ai_subject/ai_summary are low-confidence AI hints — orient with them, then locate and identify the actual issue in the structured payload (custom_fields, links, body), never from the summary alone. Read body_essence to see what the person actually said with signatures, disclaimers and quoted history stripped; fall back to body_md if it's null.",
     inputSchema: {
       type: 'object',
       properties: {
