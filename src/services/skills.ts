@@ -52,6 +52,13 @@ export const tools: ToolDef[] = [
         body: { type: 'string', description: 'SKILL.md markdown procedure.' },
         required_tools: { type: 'array', items: { type: 'string' }, description: 'LSP module ids this skill needs.' },
         tags: { type: 'array', items: { type: 'string' } },
+        // ClaudeCode 2026-08-05 01:11 PM PDT
+        signatures: {
+          type: 'array',
+          description:
+            "Optional. Match this skill on FACTS in the caller's structured payload instead of word overlap with the trigger — a signature match outranks every lexical match. Each entry is a list of predicates ({path, op, value}) or {label, predicates}; ALL predicates in a signature must hold. op is 'eq' | 'exists' | 'contains'; path is a dot path into the payload and traverses arrays, e.g. 'csd_marks.marks.anchors.tag'. Example: [{\"label\":\"marked link\",\"predicates\":[{\"path\":\"csd_marks.marks.anchors.tag\",\"op\":\"eq\",\"value\":\"a\"},{\"path\":\"csd_marks.pageUrl\",\"op\":\"exists\"}]}]. Send [] to clear.",
+          items: { type: 'object' },
+        },
         source: {
           type: 'string',
           enum: ['authored', 'promoted_from_session', 'imported', 'platform'],
