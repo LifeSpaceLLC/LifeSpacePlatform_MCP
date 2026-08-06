@@ -6,6 +6,9 @@
 // then flows into the mint (down-scoped there). Before this, the OAuth path
 // silently minted at the role's home tenant — for a root admin, root.
 import { sql } from './db.js';
+// ClaudeCode 2026-08-06 10:50 AM PDT — shell moved to ui.ts so the picker, the
+// authorize interstitial and the cancelled page are one visual flow.
+import { SHELL, esc } from './ui.js';
 
 export interface TenantNode {
   id: string;
@@ -51,36 +54,31 @@ export async function tenantName(id: string): Promise<string> {
   return (rows[0]?.name as string) ?? id.slice(0, 8);
 }
 
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
-
-const SHELL = (title: string, body: string) => `<!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${title}</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.card{background:#fff;border-radius:16px;padding:40px;box-shadow:0 4px 24px rgba(0,0,0,.08);max-width:460px;width:100%}
-h1{font-size:22px;font-weight:600;color:#1a1a1a;margin-bottom:8px}.sub{font-size:14px;color:#666;margin-bottom:20px}
-.btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 20px;margin:10px 0 0;border:1px solid #2563eb;border-radius:8px;font-size:15px;font-weight:500;color:#fff;background:#2563eb;cursor:pointer}
-label{display:flex;align-items:center;gap:8px;font-size:14px;color:#333;margin:4px 0;cursor:pointer}.muted{font-size:12px;color:#999;margin-top:16px}</style>
-</head><body><div class="card">${body}<p class="muted">Powered by LifeSpace Trust</p></div></body></html>`;
-
 export function renderMessage(title: string, msg: string): string {
   return SHELL(title, `<h1>${esc(title)}</h1><p class="sub">${esc(msg)}</p>`);
 }
 
 // The admin tenant picker. `consentId` is the opaque server-side handle; the
 // identity is never trusted from the client. Radios default to the home tenant.
-export function renderConsent(consentId: string, email: string, homeTenant: string, tree: TenantNode[]): string {
+export function renderConsent(consentId: string, email: string, homeTenant: string, tree: TenantNode[], clientName?: string): string {
   const rows = tree.map((t) => {
     const pad = 8 + t.depth * 20;
     const checked = t.id === homeTenant ? ' checked' : '';
     const typeTag = t.type ? ` <span class="muted">· ${esc(t.type)}</span>` : '';
     return `<label style="padding-left:${pad}px"><input type="radio" name="tenant_id" value="${esc(t.id)}"${checked}> ${esc(t.name)}${typeTag}</label>`;
   }).join('');
+  // ClaudeCode 2026-08-06 10:52 AM PDT — the signed-in identity is the thing that
+  // goes wrong across several Google accounts and Chrome profiles, so it leads the
+  // page in its own block with an explicit way out, not a sentence in the subtitle.
+  const tool = clientName?.trim() ? ` for <b>${esc(clientName.trim())}</b>` : '';
   return SHELL('Choose tenant', `
     <h1>Connect to which tenant?</h1>
-    <p class="sub">Signed in as <b>${esc(email)}</b>. Pick the tenant this connection should operate in. Choosing a sub-tenant scopes the connection to that tenant only.</p>
+    <div class="who">Signed in as <b>${esc(email)}</b> — not you? <a href="/oauth/cancel">Cancel</a> and restart in the right browser profile.</div>
+    <p class="sub">Pick the tenant this connection${tool} should operate in. Choosing a sub-tenant scopes the connection to that tenant only.</p>
     <form method="POST" action="/oauth/consent">
       <input type="hidden" name="consent" value="${esc(consentId)}">
       <div style="max-height:260px;overflow:auto;border:1px solid #eee;border-radius:8px;padding:8px 4px">${rows}</div>
       <button class="btn" type="submit">Approve &amp; connect</button>
-    </form>`);
+    </form>
+    <a class="btn btn-secondary" href="/oauth/cancel">Cancel</a>`);
 }

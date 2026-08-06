@@ -21,6 +21,9 @@ import { InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/
 import { sql, sha256, jsonb } from './db.js';
 import { ssoStartUrl, exchangeSsoCode, mintAccessToken, trustPublicKey, type TrustIdentity } from './trust.js';
 import { getSubtreeTree, getSubtreeIds, renderConsent, renderMessage } from './tenants.js';
+// ClaudeCode 2026-08-06 10:55 AM PDT — the authorize interstitial ("page before
+// the page") + its cancelled landing.
+import { renderInterstitial, renderCancelled } from './interstitial.js';
 
 const ACCESS_TTL_SECONDS = 60 * 60; // 1h — bounds a revoked user's window (spec check #5)
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d rolling
@@ -31,6 +34,7 @@ const TXN_COOKIE = 'connect_txn';
 
 interface PendingAuthorization {
   clientId: string;
+  clientName?: string; // ClaudeCode 2026-08-06: shown on the interstitial + picker
   redirectUri: string; // the MCP client's redirect_uri
   state?: string;
   codeChallenge: string;
@@ -55,6 +59,7 @@ function sweepPending(): void {
 // consentId carried in the form; identity is NEVER trusted from the client.
 interface ConsentPending {
   clientId: string;
+  clientName?: string;
   redirectUri: string;
   state?: string;
   codeChallenge: string;
@@ -132,8 +137,14 @@ class ConnectClientsStore implements OAuthRegisteredClientsStore {
 export class ConnectOAuthProvider implements OAuthServerProvider {
   readonly clientsStore = new ConnectClientsStore();
 
-  // Step 1 — the MCP client hit /authorize. Stash the request, drop a cookie,
-  // and bounce the browser into Trust's Google SSO.
+  // Step 1 — the MCP client hit /authorize. Stash the request, drop a cookie, and
+  // RENDER THE INTERSTITIAL. ClaudeCode 2026-08-06 10:56 AM PDT: this used to 302
+  // straight into Google, which lands a context-free account chooser in whatever
+  // Chrome profile happened to be frontmost — no statement of which tool asked or
+  // which tenant is involved. Now nothing leaves this origin until the person
+  // clicks Continue. The OAuth parameters never travel through the page: they stay
+  // in the server-side `pending` entry keyed by the HttpOnly connect_txn cookie,
+  // so Continue cannot drop or mangle them.
   async authorize(
     client: OAuthClientInformationFull,
     params: AuthorizationParams,
@@ -143,6 +154,7 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     const txn = crypto.randomBytes(32).toString('hex');
     pending.set(txn, {
       clientId: client.client_id,
+      clientName: client.client_name,
       redirectUri: params.redirectUri,
       state: params.state,
       codeChallenge: params.codeChallenge,
@@ -156,7 +168,42 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       path: '/oauth',
       maxAge: PENDING_TTL_MS,
     });
+    // The copy-to-clipboard link is THIS authorize request, verbatim — pasting it
+    // into another Chrome profile replays the same OAuth request there (fresh txn,
+    // fresh cookie), which is exactly the "start in the right profile" escape.
+    const originalUrl = (res.req as Request | undefined)?.originalUrl ?? '/authorize';
+    res.type('html').send(
+      renderInterstitial({
+        clientName: client.client_name ?? '',
+        continueUrl: '/oauth/continue',
+        cancelUrl: '/oauth/cancel',
+        authorizeUrl: new URL(originalUrl, connectBaseUrl()).href,
+      }),
+    );
+  }
+
+  // Step 1b — Continue clicked. The cookie identifies the held request; we simply
+  // hand the browser to Trust's Google SSO, same as the old direct redirect.
+  async handleContinue(req: Request, res: Response): Promise<void> {
+    sweepPending();
+    const txn = parseCookie(req.headers.cookie, TXN_COOKIE);
+    const pend = txn ? pending.get(txn) : undefined;
+    if (!pend || pend.expiresAt < Date.now()) {
+      res.status(400).type('html').send(renderMessage('Sign-in session expired', 'This sign-in window closed before it was used. Start the connection again from the tool that asked.'));
+      return;
+    }
     res.redirect(302, ssoStartUrl(trustCallbackUri()));
+  }
+
+  // Step 1c — Cancel clicked (from the interstitial or the tenant picker). Drop
+  // everything we were holding and land on a terminal page. Deliberately NOT a
+  // redirect back to the client: a refusal must not bounce into a new authorize.
+  async handleCancel(req: Request, res: Response): Promise<void> {
+    const txn = parseCookie(req.headers.cookie, TXN_COOKIE);
+    if (txn) pending.delete(txn);
+    res.clearCookie(TXN_COOKIE, { path: '/oauth' });
+    sweepConsent();
+    res.status(200).type('html').send(renderCancelled());
   }
 
   // Step 2 — Trust bounced back to /oauth/trust/callback?sso_code=… . This is a
@@ -206,10 +253,20 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       return;
     }
 
+    // ClaudeCode 2026-08-06 10:58 AM PDT — single-membership identities skip the
+    // picker: an admin whose subtree is just their own tenant has nothing to
+    // choose, so don't make them click through a one-option page.
+    const tree = await getSubtreeTree(homeTenant);
+    if (tree.length <= 1) {
+      await this.issueCodeAndRedirect(res, pend, identity, homeTenant);
+      return;
+    }
+
     sweepConsent();
     const consentId = crypto.randomBytes(32).toString('hex');
     consentPending.set(consentId, {
       clientId: pend.clientId,
+      clientName: pend.clientName,
       redirectUri: pend.redirectUri,
       state: pend.state,
       codeChallenge: pend.codeChallenge,
@@ -218,8 +275,7 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       homeTenant,
       expiresAt: Date.now() + PENDING_TTL_MS,
     });
-    const tree = await getSubtreeTree(homeTenant);
-    res.type('html').send(renderConsent(consentId, identity.email, homeTenant, tree));
+    res.type('html').send(renderConsent(consentId, identity.email, homeTenant, tree, pend.clientName));
   }
 
   // Step 2b — the admin submitted the tenant picker. Validate the chosen tenant

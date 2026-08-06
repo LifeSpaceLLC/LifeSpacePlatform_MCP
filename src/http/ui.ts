@@ -1,0 +1,25 @@
+// ClaudeCode 2026-08-06 10:49 AM PDT
+// -- ClaudeCode: shared page shell for Connect's browser-facing OAuth pages
+// (interstitial, tenant picker, cancelled/denied, error messages). Lifted out of
+// tenants.ts so every page in the flow looks like one product. Static markup,
+// zero secrets, no external assets.
+export const esc = (s: string): string =>
+  s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+
+export const SHELL = (title: string, body: string): string => `<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${esc(title)}</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{background:#fff;border-radius:16px;padding:40px;box-shadow:0 4px 24px rgba(0,0,0,.08);max-width:520px;width:100%}
+h1{font-size:22px;font-weight:600;color:#1a1a1a;margin-bottom:8px}.sub{font-size:14px;color:#666;margin-bottom:20px}
+.btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 20px;margin:10px 0 0;border:1px solid #2563eb;border-radius:8px;font-size:15px;font-weight:500;color:#fff;background:#2563eb;cursor:pointer;text-decoration:none}
+.btn-secondary{background:#fff;color:#333;border-color:#d4d4d4}
+.panel{border:1px solid #eee;border-radius:10px;padding:14px 16px;margin:0 0 16px}
+.panel-quiet{background:#fafafa;margin-top:22px}
+.row{display:flex;gap:12px;padding:6px 0;font-size:14px;color:#333}
+.k{flex:0 0 130px;color:#888;font-size:13px}.v{flex:1}
+.urlbox{width:100%;padding:9px 10px;margin:8px 0 0;border:1px solid #ddd;border-radius:8px;font-size:12px;color:#444;background:#fff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.who{background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 14px;margin:0 0 16px;font-size:14px;color:#1e3a8a}
+label{display:flex;align-items:center;gap:8px;font-size:14px;color:#333;margin:4px 0;cursor:pointer}
+.note{font-size:12px;color:#777;margin-top:8px;line-height:1.5}
+.muted{font-size:12px;color:#999;margin-top:16px}</style>
+</head><body><div class="card">${body}<p class="muted">Powered by LifeSpace Trust</p></div></body></html>`;
