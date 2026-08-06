@@ -60,10 +60,29 @@ export function renderMessage(title: string, msg: string): string {
 
 // The admin tenant picker. `consentId` is the opaque server-side handle; the
 // identity is never trusted from the client. Radios default to the home tenant.
-export function renderConsent(consentId: string, email: string, homeTenant: string, tree: TenantNode[], clientName?: string): string {
+// ClaudeCode 2026-08-06 11:32 AM PDT — `selected` is the radio to preselect: the
+// home tenant, or the tenant a caller's tenant_hint matched.
+//
+// HARD RULES (spoofing guard — a caller-supplied hint is untrusted input):
+//   1. The list is SERVER TRUTH — it is built from the signed-in identity's own
+//      tenant subtree. A hint can never add a row to it.
+//   2. A hint may only PRESELECT a row that is already in that list. It never
+//      skips this page and never auto-submits it (there is no submit script).
+//   3. A hint never influences role, scopes, or modules — those come from Trust
+//      at mint time, re-resolved from the identity.
+// Preselection is a convenience; the person still chooses and submits.
+export function renderConsent(
+  consentId: string,
+  email: string,
+  selected: string,
+  tree: TenantNode[],
+  clientName?: string,
+  label?: string,
+  tenantHint?: string,
+): string {
   const rows = tree.map((t) => {
     const pad = 8 + t.depth * 20;
-    const checked = t.id === homeTenant ? ' checked' : '';
+    const checked = t.id === selected ? ' checked' : '';
     const typeTag = t.type ? ` <span class="muted">· ${esc(t.type)}</span>` : '';
     return `<label style="padding-left:${pad}px"><input type="radio" name="tenant_id" value="${esc(t.id)}"${checked}> ${esc(t.name)}${typeTag}</label>`;
   }).join('');
@@ -75,6 +94,10 @@ export function renderConsent(consentId: string, email: string, homeTenant: stri
     <h1>Connect to which tenant?</h1>
     <div class="who">Signed in as <b>${esc(email)}</b> — not you? <a href="/oauth/cancel">Cancel</a> and restart in the right browser profile.</div>
     <p class="sub">Pick the tenant this connection${tool} should operate in. Choosing a sub-tenant scopes the connection to that tenant only.</p>
+    ${label || tenantHint ? `<div class="claim">
+      This request says it is from: ${label ? `<b>${esc(label)}</b>` : '<i>no label given</i>'} — <b>unverified</b><span class="tag">unverified</span>
+      ${tenantHint ? `<div>Expects tenant: <b>${esc(tenantHint)}</b> — <b>unverified</b></div>` : ''}
+      <p class="note">Supplied by the requesting tool, not verified by LifeSpace. It may highlight an option below; your selection is what counts.</p></div>` : ''}
     <form method="POST" action="/oauth/consent">
       <input type="hidden" name="consent" value="${esc(consentId)}">
       <div style="max-height:260px;overflow:auto;border:1px solid #eee;border-radius:8px;padding:8px 4px">${rows}</div>

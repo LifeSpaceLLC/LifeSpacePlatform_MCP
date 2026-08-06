@@ -7,6 +7,7 @@
 // signed-in email prominently. Run: npx tsx src/http/flow-check.ts
 import type { Request, Response } from 'express';
 import { ConnectOAuthProvider } from './oauth-provider.js';
+import { describeOrigin, clean, LABEL_MAX } from './interstitial.js';
 import { renderConsent } from './tenants.js';
 
 process.env.CONNECT_BASE_URL ??= 'https://connect.lifespace.com';
@@ -116,6 +117,53 @@ assert('picker states the signed-in email prominently', picker.includes('class="
 assert('picker offers the wrong-profile escape', picker.includes('not you?') && picker.includes('/oauth/cancel'));
 assert('picker lists tenant NAMES', picker.includes('LifeSpace Platform') && picker.includes('Realcomm'));
 assert('picker names the requesting tool', picker.includes('<b>Claude</b>'));
+
+// ClaudeCode 2026-08-06 11:36 AM PDT — origin line + caller self-description.
+assert('origin: loopback redirect_uri reads as a local program',
+  describeOrigin('http://127.0.0.1:6274/oauth/callback') === 'a local program on this computer (port 6274)',
+  describeOrigin('http://127.0.0.1:6274/oauth/callback'));
+assert('origin: claude.ai callback reads as claude.ai', describeOrigin('https://claude.ai/api/mcp/auth_callback') === 'claude.ai');
+assert('origin: anything else shows the host plainly', describeOrigin('https://weird.example.com/cb') === 'weird.example.com');
+assert('origin: garbage redirect_uri degrades safely', describeOrigin('not-a-url') === 'an unrecognized destination');
+assert('interstitial renders the derived origin line', authorize.html.includes('Requested by: <b>claude.ai</b>'));
+
+// Untrusted label / hint: present, escaped, capped, and never described as verified.
+const evilLabel = '<img src=x onerror=alert(1)>Coach Simple folder';
+const hintReq: Partial<Request> = {
+  originalUrl: `${AUTHORIZE_QS}&label=${encodeURIComponent(evilLabel)}&tenant_hint=${encodeURIComponent('Coach Simple')}`,
+  query: { label: evilLabel, tenant_hint: 'Coach Simple' },
+  headers: {},
+};
+const { res: hRes, out: hinted } = stubRes(hintReq);
+await provider.authorize(client, { ...(params as object) } as never, hRes);
+assert('label is rendered as TEXT, never markup', hinted.html.includes('&lt;img src=x onerror=alert(1)&gt;') && !hinted.html.includes('<img src=x'));
+assert('label + tenant hint shown as the caller\'s own claim',
+  hinted.html.includes('This request says it is from:') && hinted.html.includes('Expects tenant: <b>Coach Simple</b>'));
+assert('hint is not presented as verified', hinted.html.includes('LifeSpace cannot verify it'));
+// Spoofing guard: the caller's claim must SAY "unverified" and be styled apart
+// from the server-verified facts (registered client name + derived origin).
+assert('claim block carries the visible word "unverified"', /This request says it is from:[\s\S]{0,300}unverified/i.test(hinted.html));
+assert('claim block is styled distinctly from verified facts',
+  hinted.html.includes('class="claim"') && hinted.html.includes('class="tag">unverified'));
+assert('verified facts stay in their own blocks', hinted.html.includes('class="who">Requested by') && hinted.html.includes('Requesting tool'));
+assert('footer states the unverified convention', hinted.html.includes("Anything this page can't verify is marked unverified."));
+assert('over-long label is capped', (clean('x'.repeat(500), LABEL_MAX) ?? '').length === LABEL_MAX + 1);
+
+// tenant_hint preselects the matching radio in the picker — still a confirmation.
+const tree = [
+  { id: 'tenant-1', name: 'LifeSpace Platform', type: 'root', depth: 0 },
+  { id: 'tenant-2', name: 'Coach Simple', type: 'client', depth: 1 },
+];
+const preselected = renderConsent('c1', 'greg@lifespace.com', 'tenant-2', tree, 'Claude', 'Coach Simple folder', 'Coach Simple');
+assert('picker preselects the hinted tenant',
+  /value="tenant-2" checked/.test(preselected) && !/value="tenant-1" checked/.test(preselected));
+assert('picker still requires a submit (no auto-submit script)', !/\.submit\(\)/.test(preselected));
+assert('picker repeats the label as an unverified claim',
+  preselected.includes('Coach Simple folder') && preselected.includes('class="claim"') && /unverified/.test(preselected));
+// A hint can only highlight a row the server already put in the list.
+const spoofed = renderConsent('c2', 'greg@lifespace.com', 'tenant-1', tree, 'Claude', 'Totally Legit', 'Some Other Tenant');
+assert('hint for a tenant the user does not hold adds no row + preselects nothing new',
+  !spoofed.includes('Some Other Tenant"') && /value="tenant-1" checked/.test(spoofed) && (spoofed.match(/type="radio"/g) ?? []).length === 2);
 
 console.log('\n--- interstitial text (visible copy) ---');
 console.log(authorize.html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '')

@@ -20,10 +20,10 @@ import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { sql, sha256, jsonb } from './db.js';
 import { ssoStartUrl, exchangeSsoCode, mintAccessToken, trustPublicKey, type TrustIdentity } from './trust.js';
-import { getSubtreeTree, getSubtreeIds, renderConsent, renderMessage } from './tenants.js';
+import { getSubtreeTree, getSubtreeIds, renderConsent, renderMessage, tenantName, type TenantNode } from './tenants.js';
 // ClaudeCode 2026-08-06 10:55 AM PDT — the authorize interstitial ("page before
 // the page") + its cancelled landing.
-import { renderInterstitial, renderCancelled } from './interstitial.js';
+import { renderInterstitial, renderCancelled, describeOrigin, clean, LABEL_MAX, HINT_MAX } from './interstitial.js';
 
 const ACCESS_TTL_SECONDS = 60 * 60; // 1h — bounds a revoked user's window (spec check #5)
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d rolling
@@ -35,6 +35,12 @@ const TXN_COOKIE = 'connect_txn';
 interface PendingAuthorization {
   clientId: string;
   clientName?: string; // ClaudeCode 2026-08-06: shown on the interstitial + picker
+  // ClaudeCode 2026-08-06 11:25 AM PDT — optional self-description supplied by the
+  // caller on /authorize (?label=, ?tenant_hint=). UNVERIFIED and untrusted: shown
+  // as "what this request says about itself", and the hint only ever PRESELECTS a
+  // radio the person still has to confirm. It can never widen access.
+  label?: string;
+  tenantHint?: string;
   redirectUri: string; // the MCP client's redirect_uri
   state?: string;
   codeChallenge: string;
@@ -72,6 +78,32 @@ const consentPending = new Map<string, ConsentPending>();
 function sweepConsent(): void {
   const now = Date.now();
   for (const [k, v] of consentPending) if (v.expiresAt < now) consentPending.delete(k);
+}
+
+// ClaudeCode 2026-08-06 11:28 AM PDT — a tenant_hint may be a uuid or a name.
+// If it is a uuid we can resolve, show the NAME (a uuid tells a person nothing);
+// otherwise show exactly what was sent. Resolution is display-only — it grants
+// nothing, and an unresolvable hint is not an error.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function displayHint(hint?: string): Promise<string | undefined> {
+  if (!hint) return undefined;
+  if (!UUID_RE.test(hint)) return hint;
+  try {
+    const name = await tenantName(hint);
+    return name && name !== hint.slice(0, 8) ? name : hint;
+  } catch {
+    return hint;
+  }
+}
+
+// Match a hint against the tenants this person can actually choose. Exact uuid,
+// else case-insensitive name match. No match = no preselection, nothing else.
+function resolveHintToTenant(hint: string | undefined, tree: TenantNode[]): string | undefined {
+  if (!hint) return undefined;
+  const h = hint.trim().toLowerCase();
+  const byId = tree.find((t) => t.id.toLowerCase() === h);
+  if (byId) return byId.id;
+  return tree.find((t) => t.name.trim().toLowerCase() === h)?.id;
 }
 
 function connectBaseUrl(): string {
@@ -151,10 +183,17 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     res: Response,
   ): Promise<void> {
     sweepPending();
+    // The SDK ignores unknown query params, so read the caller's optional
+    // self-description straight off the request and sanitize it here, once.
+    const q = ((res.req as Request | undefined)?.query ?? {}) as Record<string, unknown>;
+    const label = clean(typeof q.label === 'string' ? q.label : undefined, LABEL_MAX);
+    const tenantHint = clean(typeof q.tenant_hint === 'string' ? q.tenant_hint : undefined, HINT_MAX);
     const txn = crypto.randomBytes(32).toString('hex');
     pending.set(txn, {
       clientId: client.client_id,
       clientName: client.client_name,
+      label,
+      tenantHint,
       redirectUri: params.redirectUri,
       state: params.state,
       codeChallenge: params.codeChallenge,
@@ -178,6 +217,9 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
         continueUrl: '/oauth/continue',
         cancelUrl: '/oauth/cancel',
         authorizeUrl: new URL(originalUrl, connectBaseUrl()).href,
+        origin: describeOrigin(params.redirectUri),
+        label,
+        tenantHint: await displayHint(tenantHint),
       }),
     );
   }
@@ -275,7 +317,10 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       homeTenant,
       expiresAt: Date.now() + PENDING_TTL_MS,
     });
-    res.type('html').send(renderConsent(consentId, identity.email, homeTenant, tree, pend.clientName));
+    // A tenant_hint that matches one of the tenants this person can choose
+    // PRESELECTS that radio — it is still a confirmation, never an auto-submit.
+    const preselect = resolveHintToTenant(pend.tenantHint, tree) ?? homeTenant;
+    res.type('html').send(renderConsent(consentId, identity.email, preselect, tree, pend.clientName, pend.label, pend.tenantHint));
   }
 
   // Step 2b — the admin submitted the tenant picker. Validate the chosen tenant
