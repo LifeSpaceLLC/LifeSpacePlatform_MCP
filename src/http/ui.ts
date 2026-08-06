@@ -19,6 +19,13 @@ h1{font-size:22px;font-weight:600;color:#1a1a1a;margin-bottom:8px}.sub{font-size
 .k{flex:0 0 130px;color:#888;font-size:13px}.v{flex:1}
 .urlbox{width:100%;padding:9px 10px;margin:8px 0 0;border:1px solid #ddd;border-radius:8px;font-size:12px;color:#444;background:#fff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .who{background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 14px;margin:0 0 16px;font-size:14px;color:#1e3a8a}
+/* ClaudeCode 2026-08-06 11:45 AM PDT — verified facts (blue .who / plain .panel)
+   must never look like caller-supplied claims. Anything the caller told us about
+   itself renders in this amber, dashed, explicitly-labelled block. */
+.claim{background:#fffbeb;border:1px dashed #f59e0b;border-radius:10px;padding:12px 14px;margin:0 0 16px;font-size:14px;color:#78350f}
+.claim .tag{display:inline-block;background:#f59e0b;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;margin-left:6px;vertical-align:1px}
+.claim .note{color:#92400e}
+.footnote{font-size:12px;color:#78350f;background:#fffbeb;border-radius:8px;padding:8px 10px;margin-top:18px}
 label{display:flex;align-items:center;gap:8px;font-size:14px;color:#333;margin:4px 0;cursor:pointer}
 .note{font-size:12px;color:#777;margin-top:8px;line-height:1.5}
 .muted{font-size:12px;color:#999;margin-top:16px}</style>

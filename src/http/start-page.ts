@@ -36,6 +36,17 @@ const GOOGLE_STEP =
 const TENANT_STEP =
   'If you are asked <i>“Connect to which tenant?”</i>, pick your team and continue. Most people never see this screen — it appears only for admins with more than one team.';
 
+// ClaudeCode 2026-08-06 12:02 PM PDT — the sign-in page can say which request it
+// is showing, if the caller tells it. Documented honestly: the two params are read
+// off the /authorize URL, and standard connector clients (mcp-remote, Claude Code's
+// http transport) build that URL themselves from our metadata — they do NOT forward
+// query params from the address in .mcp.json. So the practical route is the copy-
+// link escape on the sign-in page, plus any caller that builds its own authorize URL.
+const LABEL_STEP =
+  'The sign-in page can show a note about which connection it belongs to. Add <code>label</code> (free text) and <code>tenant_hint</code> (a team name or id) to the sign-in URL — e.g. <code>…/authorize?…&amp;label=Coach%20Simple%20folder&amp;tenant_hint=Coach%20Simple</code>. The page then reads <i>“This request says it is from: Coach Simple folder — unverified”</i>, and a matching team is preselected in the picker (you still confirm it). ' +
+  'Both are shown as <b>unverified</b> because anyone can put text in a URL — they never change what you can access. ' +
+  'Easiest way to use them: on the sign-in page click <b>Copy sign-in link</b>, paste it in the browser profile you want, add the two parameters, and open it there. Note that <code>mcp-remote</code> and the built-in connector clients build the sign-in URL themselves, so parameters added to the server URL in <code>.mcp.json</code> are not passed through.';
+
 const TAB_CONTENT: Record<StartApp, { label: string; intro: string; steps: string }> = {
   cowork: {
     label: 'Cowork',
@@ -66,7 +77,8 @@ const TAB_CONTENT: Record<StartApp, { label: string; intro: string; steps: strin
       step(1, 'Add the connector to your project', `Open a terminal in your project folder and run:${copyBlock('cc-cmd', CLAUDE_CODE_CMD, 'Copy the command')}This writes a project-scoped <code>.mcp.json</code> — the connection belongs to this folder only.`),
       step(2, 'Authenticate', `Start <code>claude</code>, type ${copyBlock('cc-mcp', '/mcp', 'Copy /mcp')} choose <b>lsp</b>, then <b>Authenticate</b>. ${GOOGLE_STEP}`),
       step(3, 'Pick your team (admins only)', TENANT_STEP),
-      step(4, 'Working across teams?', 'Repeat these steps in each project folder. Each folder signs in on its own, so different folders can point at different tenants — that’s the intended pattern, not a workaround.'),
+      step(4, 'Label the sign-in page (optional)', LABEL_STEP),
+      step(5, 'Working across teams?', 'Repeat these steps in each project folder. Each folder signs in on its own, so different folders can point at different tenants — that’s the intended pattern, not a workaround.'),
     ].join(''),
   },
   codex: {
