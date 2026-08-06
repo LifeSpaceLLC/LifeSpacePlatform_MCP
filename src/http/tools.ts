@@ -65,6 +65,12 @@ export const TOOL_MODULE: Record<string, string> = Object.fromEntries(
 export interface CallerClaims {
   role?: string;
   modules?: string[] | null;
+  // ClaudeCode 2026-08-06 11:06 AM PDT — identity/tenant claims, stated back to
+  // the caller in the initialize instructions so a session can see which tenant
+  // its connector is scoped to without a tool call.
+  tenant_id?: string;
+  tenant_name?: string;
+  email?: string;
 }
 
 /** admin/super_admin/tenant_admin (i.e. anyone who is NOT a plain 'user') see

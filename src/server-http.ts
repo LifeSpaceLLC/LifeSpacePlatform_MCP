@@ -37,6 +37,7 @@ import {
 import { requestContext } from './request-context.js';
 import { errText } from './client.js';
 import { renderStartPage, normalizeApp } from './http/start-page.js';
+import { tenantName } from './http/tenants.js';
 
 const CONNECT_BASE_URL = process.env.CONNECT_BASE_URL ?? 'https://connect.lifespace.com';
 const issuerUrl = new URL(CONNECT_BASE_URL);
@@ -79,6 +80,21 @@ app.get('/oauth/trust/callback', (req, res) => {
   });
 });
 
+// ClaudeCode 2026-08-06 11:00 AM PDT — the interstitial's two buttons. /authorize
+// now renders a landing page instead of redirecting into Google; Continue hands
+// off to Trust SSO (OAuth params held server-side, keyed by the connect_txn
+// cookie), Cancel lands on a terminal denied page with no redirect back.
+app.get('/oauth/continue', (req, res) => {
+  provider.handleContinue(req, res).catch(() => {
+    if (!res.headersSent) res.status(500).send('Sign-in failed.');
+  });
+});
+app.get('/oauth/cancel', (req, res) => {
+  provider.handleCancel(req, res).catch(() => {
+    if (!res.headersSent) res.status(500).send('Cancel failed.');
+  });
+});
+
 // -- ClaudeCode (2026-07-09, G1 security fix): the admin tenant-picker submit.
 // Validates the chosen tenant is in the caller's subtree, then issues the auth
 // code scoped to it.
@@ -101,7 +117,7 @@ app.post('/mcp', cors(), express.json(), bearerAuth, async (req, res) => {
   const claims = ((authInfo.extra?.claims as Record<string, unknown>) ?? {}) as CallerClaims;
   const bearer = authInfo.token;
 
-  const server = buildServer(claims);
+  const server = await buildServer(claims);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined, // stateless (D3)
     enableJsonResponse: true,
@@ -132,10 +148,39 @@ app.post('/mcp', cors(), express.json(), bearerAuth, async (req, res) => {
 app.get('/mcp', (_req, res) => res.status(405).json({ error: 'Method Not Allowed' }));
 app.delete('/mcp', (_req, res) => res.status(405).json({ error: 'Method Not Allowed' }));
 
-function buildServer(claims: CallerClaims): Server {
+// ClaudeCode 2026-08-06 11:03 AM PDT — "what am I holding?" surfaced at connect
+// time: the initialize response states the active tenant NAME (not just a uuid)
+// and the signed-in identity, so a session never has to guess which tenant its
+// connector is scoped to. Trust's /v1/verify (behind lsp_trust_whoami) already
+// returns tenant_name; this makes the same fact visible without a tool call.
+// Names are cached per tenant id — the mapping does not churn.
+const tenantNameCache = new Map<string, string>();
+async function activeTenantName(tenantId: string): Promise<string> {
+  if (!tenantId) return '';
+  const hit = tenantNameCache.get(tenantId);
+  if (hit) return hit;
+  try {
+    const name = await tenantName(tenantId);
+    tenantNameCache.set(tenantId, name);
+    return name;
+  } catch {
+    return '';
+  }
+}
+
+async function buildServer(claims: CallerClaims): Promise<Server> {
+  const tenantId = typeof claims.tenant_id === 'string' ? claims.tenant_id : '';
+  const email = typeof claims.email === 'string' ? claims.email : '';
+  const name = claims.tenant_name || (await activeTenantName(tenantId));
+  const instructions = [
+    `LifeSpace Connect — active tenant: ${name || '(unknown)'}${tenantId ? ` (${tenantId})` : ''}.`,
+    email ? `Signed in as ${email}.` : '',
+    'Every tool call runs in this tenant only. Call lsp_trust_whoami to re-confirm.',
+  ].filter(Boolean).join(' ');
+
   const server = new Server(
     { name: 'lifespace-connect', version: '0.1.0' },
-    { capabilities: { tools: {}, prompts: {} } },
+    { capabilities: { tools: {}, prompts: {} }, instructions },
   );
 
   const visibleTools = toolsForClaims(claims);
