@@ -77,6 +77,20 @@ export const DDL: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_connect_tokens_client ON ls_connect_tokens(client_id)`,
   `CREATE INDEX IF NOT EXISTS idx_connect_tokens_user ON ls_connect_tokens(user_id)`,
+
+  // ClaudeCode 2026-08-06 05:33 PM PDT — in-flight OAuth transactions (the held
+  // /authorize request + the tenant-picker state). Previously process-local Maps,
+  // which the authorize interstitial made fatally fragile: a redeploy or restart
+  // during the human's Google sign-in destroyed the transaction and the callback
+  // dead-ended with no way to signal the client. See http/txn-store.ts.
+  `CREATE TABLE IF NOT EXISTS ls_connect_txns (
+    txn_key text PRIMARY KEY,
+    kind text NOT NULL,
+    payload jsonb NOT NULL,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_connect_txns_expires ON ls_connect_txns(expires_at)`,
 ];
 
 export async function applySchema(): Promise<void> {
