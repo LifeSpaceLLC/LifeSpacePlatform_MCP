@@ -9,10 +9,18 @@ import type { Request, Response } from 'express';
 import { ConnectOAuthProvider } from './oauth-provider.js';
 import { describeOrigin, clean, LABEL_MAX } from './interstitial.js';
 import { renderConsent } from './tenants.js';
+// ClaudeCode 2026-08-06 05:40 PM PDT — the durable transaction store, swapped for
+// an in-memory one so this check stays offline (no Postgres, no Trust, no Google).
+import { MemoryTxnStore, setTxnStore } from './txn-store.js';
 
 process.env.CONNECT_BASE_URL ??= 'https://connect.lifespace.com';
 process.env.TRUST_BASE_URL ??= 'https://trust.lifespace.com';
 process.env.CONNECT_TRUST_APP_ID ??= '00000000-0000-0000-0000-000000000000';
+// db.ts requires the var at import time; nothing here ever opens a connection.
+process.env.DATABASE_URL ??= 'postgres://offline-flow-check/none';
+
+const store = new MemoryTxnStore();
+setTxnStore(store);
 
 interface Captured { status: number; html: string; redirect?: string; cookies: string[] }
 
@@ -164,6 +172,44 @@ assert('picker repeats the label as an unverified claim',
 const spoofed = renderConsent('c2', 'greg@lifespace.com', 'tenant-1', tree, 'Claude', 'Totally Legit', 'Some Other Tenant');
 assert('hint for a tenant the user does not hold adds no row + preselects nothing new',
   !spoofed.includes('Some Other Tenant"') && /value="tenant-1" checked/.test(spoofed) && (spoofed.match(/type="radio"/g) ?? []).length === 2);
+
+// ---------------------------------------------------------------------------
+// ClaudeCode 2026-08-06 05:42 PM PDT — REGRESSION: the 2026-08-06 Connect outage.
+// The interstitial stretched the /authorize→Trust-callback window from one
+// automatic 302 into a human-paced Google sign-in. While the held request lived
+// in a process-local Map, a redeploy or restart inside that window destroyed it:
+// the callback then dead-ended on connect.lifespace.com with "Sign-in session
+// expired or not found", and because the client's redirect_uri was ONLY in that
+// lost entry, the MCP client's loopback listener never received a single hit.
+// These three checks pin the fix: the transaction is written to the durable
+// store, a FRESH provider (a restarted process) can still complete the flow, and
+// it is consumed exactly once.
+const { res: rRes, out: restartAuth } = stubRes({ originalUrl: AUTHORIZE_QS, headers: {} });
+await provider.authorize(client, params, rRes);
+const rCookie = restartAuth.cookies[restartAuth.cookies.length - 1] ?? '';
+
+assert('held /authorize request is written to the durable store, not process memory',
+  (await store.size()) > 0);
+
+// A brand-new provider instance == the process that just came back from a deploy.
+const restarted = new ConnectOAuthProvider();
+const { res: rgRes, out: rCont } = stubRes({ headers: { cookie: rCookie } });
+await restarted.handleContinue({ headers: { cookie: rCookie } } as Request, rgRes);
+assert('Continue still works after a process restart',
+  rCont.status === 302 && (rCont.redirect ?? '').startsWith('https://trust.lifespace.com/auth/google?'), rCont.redirect);
+
+const { res: rcbRes, out: rCb } = stubRes({ headers: { cookie: rCookie } });
+await restarted.handleTrustCallback({ headers: { cookie: rCookie }, query: {} } as unknown as Request, rcbRes);
+const rBack = new URL(rCb.redirect ?? 'https://invalid.example');
+assert('Trust callback after a restart still reaches the client (no dead-end 400)',
+  rCb.status === 302 && rBack.origin + rBack.pathname === 'https://claude.ai/api/mcp/auth_callback',
+  `${rCb.status} ${rCb.redirect ?? rCb.html.slice(0, 60)}`);
+assert('restarted callback preserves the original state', rBack.searchParams.get('state') === 'xyz123');
+
+// Consumed exactly once — a replayed callback must not resurrect the request.
+const { res: r2Res, out: rCb2 } = stubRes({ headers: { cookie: rCookie } });
+await restarted.handleTrustCallback({ headers: { cookie: rCookie }, query: {} } as unknown as Request, r2Res);
+assert('held request is single-use (replayed callback gets nothing)', rCb2.status === 400 && !rCb2.redirect);
 
 console.log('\n--- interstitial text (visible copy) ---');
 console.log(authorize.html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '')

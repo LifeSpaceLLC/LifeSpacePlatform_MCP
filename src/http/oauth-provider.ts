@@ -24,6 +24,10 @@ import { getSubtreeTree, getSubtreeIds, renderConsent, renderMessage, tenantName
 // ClaudeCode 2026-08-06 10:55 AM PDT — the authorize interstitial ("page before
 // the page") + its cancelled landing.
 import { renderInterstitial, renderCancelled, describeOrigin, clean, LABEL_MAX, HINT_MAX } from './interstitial.js';
+// ClaudeCode 2026-08-06 05:33 PM PDT — in-flight OAuth transactions are now
+// DURABLE (Postgres) instead of process-local Maps. See txn-store.ts for the
+// outage this fixes.
+import { txnStore } from './txn-store.js';
 
 const ACCESS_TTL_SECONDS = 60 * 60; // 1h — bounds a revoked user's window (spec check #5)
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d rolling
@@ -48,16 +52,13 @@ interface PendingAuthorization {
   expiresAt: number;
 }
 
-// -- ClaudeCode: The authorize→SSO→callback correlation is a seconds-long
-// transient. Trust itself keeps its equivalent (pendingStates/pendingCodes) in
-// memory; we mirror that. Railway is single-instance today (D3); the cookie
-// carries the key, this map carries the request. Swept lazily on access.
-const pending = new Map<string, PendingAuthorization>();
-
-function sweepPending(): void {
-  const now = Date.now();
-  for (const [k, v] of pending) if (v.expiresAt < now) pending.delete(k);
-}
+// ClaudeCode 2026-08-06 05:34 PM PDT — the authorize→SSO→callback correlation
+// USED to be a seconds-long transient held in a process-local Map (mirroring
+// Trust's own pendingStates). The authorize interstitial ended that: the window
+// now spans the person reading a page plus a full Google sign-in, so a redeploy
+// or restart inside it silently destroyed the request and the callback had no
+// redirect_uri left to report the failure to. It lives in Postgres now — the
+// cookie still carries the key, the row carries the request. See txn-store.ts.
 
 // -- ClaudeCode (2026-07-09, G1 security fix): between SSO and the auth code, an
 // admin picks a tenant. This holds the (verified, server-side) identity + the
@@ -74,11 +75,8 @@ interface ConsentPending {
   homeTenant: string;
   expiresAt: number;
 }
-const consentPending = new Map<string, ConsentPending>();
-function sweepConsent(): void {
-  const now = Date.now();
-  for (const [k, v] of consentPending) if (v.expiresAt < now) consentPending.delete(k);
-}
+// ClaudeCode 2026-08-06 05:34 PM PDT — consent state is durable too. An admin
+// staring at the tenant picker across a redeploy used to lose the whole sign-in.
 
 // ClaudeCode 2026-08-06 11:28 AM PDT — a tenant_hint may be a uuid or a name.
 // If it is a uuid we can resolve, show the NAME (a uuid tells a person nothing);
@@ -182,14 +180,16 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    sweepPending();
     // The SDK ignores unknown query params, so read the caller's optional
     // self-description straight off the request and sanitize it here, once.
     const q = ((res.req as Request | undefined)?.query ?? {}) as Record<string, unknown>;
     const label = clean(typeof q.label === 'string' ? q.label : undefined, LABEL_MAX);
     const tenantHint = clean(typeof q.tenant_hint === 'string' ? q.tenant_hint : undefined, HINT_MAX);
     const txn = crypto.randomBytes(32).toString('hex');
-    pending.set(txn, {
+    const expiresAt = Date.now() + PENDING_TTL_MS;
+    // ClaudeCode 2026-08-06 05:36 PM PDT — persisted, not held in memory: this
+    // row has to outlive a redeploy that lands while the person is at Google.
+    await txnStore().put(txn, 'auth', {
       clientId: client.client_id,
       clientName: client.client_name,
       label,
@@ -198,8 +198,8 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       state: params.state,
       codeChallenge: params.codeChallenge,
       resource: params.resource?.href,
-      expiresAt: Date.now() + PENDING_TTL_MS,
-    });
+      expiresAt,
+    } satisfies PendingAuthorization, expiresAt);
     res.cookie(TXN_COOKIE, txn, {
       httpOnly: true,
       secure: true,
@@ -227,10 +227,10 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
   // Step 1b — Continue clicked. The cookie identifies the held request; we simply
   // hand the browser to Trust's Google SSO, same as the old direct redirect.
   async handleContinue(req: Request, res: Response): Promise<void> {
-    sweepPending();
     const txn = parseCookie(req.headers.cookie, TXN_COOKIE);
-    const pend = txn ? pending.get(txn) : undefined;
-    if (!pend || pend.expiresAt < Date.now()) {
+    // peek, not take — Continue must survive a back-button revisit.
+    const pend = txn ? ((await txnStore().peek(txn, 'auth')) as PendingAuthorization | undefined) : undefined;
+    if (!pend) {
       res.status(400).type('html').send(renderMessage('Sign-in session expired', 'This sign-in window closed before it was used. Start the connection again from the tool that asked.'));
       return;
     }
@@ -242,9 +242,8 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
   // redirect back to the client: a refusal must not bounce into a new authorize.
   async handleCancel(req: Request, res: Response): Promise<void> {
     const txn = parseCookie(req.headers.cookie, TXN_COOKIE);
-    if (txn) pending.delete(txn);
+    if (txn) await txnStore().drop(txn);
     res.clearCookie(TXN_COOKIE, { path: '/oauth' });
-    sweepConsent();
     res.status(200).type('html').send(renderCancelled());
   }
 
@@ -256,11 +255,12 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     const ssoCode = typeof req.query.sso_code === 'string' ? req.query.sso_code : undefined;
 
     const txn = parseCookie(req.headers.cookie, TXN_COOKIE);
-    const pend = txn ? pending.get(txn) : undefined;
-    if (txn) pending.delete(txn);
+    // Single-use: the DELETE ... RETURNING consumes it atomically, so two
+    // instances (or a double-fired callback) can never both claim it.
+    const pend = txn ? ((await txnStore().take(txn, 'auth')) as PendingAuthorization | undefined) : undefined;
     res.clearCookie(TXN_COOKIE, { path: '/oauth' });
 
-    if (!pend || pend.expiresAt < Date.now()) {
+    if (!pend) {
       res.status(400).send('Sign-in session expired or not found. Please retry the connection.');
       return;
     }
@@ -304,9 +304,9 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       return;
     }
 
-    sweepConsent();
     const consentId = crypto.randomBytes(32).toString('hex');
-    consentPending.set(consentId, {
+    const consentExpiresAt = Date.now() + PENDING_TTL_MS;
+    await txnStore().put(consentId, 'consent', {
       clientId: pend.clientId,
       clientName: pend.clientName,
       redirectUri: pend.redirectUri,
@@ -315,8 +315,8 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       resource: pend.resource,
       identity,
       homeTenant,
-      expiresAt: Date.now() + PENDING_TTL_MS,
-    });
+      expiresAt: consentExpiresAt,
+    } satisfies ConsentPending, consentExpiresAt);
     // A tenant_hint that matches one of the tenants this person can choose
     // PRESELECTS that radio — it is still a confirmation, never an auto-submit.
     const preselect = resolveHintToTenant(pend.tenantHint, tree) ?? homeTenant;
@@ -326,13 +326,11 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
   // Step 2b — the admin submitted the tenant picker. Validate the chosen tenant
   // is inside their subtree, then issue the auth code scoped to it.
   async handleConsent(req: Request, res: Response): Promise<void> {
-    sweepConsent();
     const body = (req.body ?? {}) as Record<string, string>;
     const consentId = typeof body.consent === 'string' ? body.consent : '';
     const chosen = typeof body.tenant_id === 'string' ? body.tenant_id.trim() : '';
-    const cp = consentId ? consentPending.get(consentId) : undefined;
-    if (cp) consentPending.delete(consentId);
-    if (!cp || cp.expiresAt < Date.now()) {
+    const cp = consentId ? ((await txnStore().take(consentId, 'consent')) as ConsentPending | undefined) : undefined;
+    if (!cp) {
       res.status(400).type('html').send(renderMessage('Session expired', 'Your sign-in window closed. Please retry the connection.'));
       return;
     }
