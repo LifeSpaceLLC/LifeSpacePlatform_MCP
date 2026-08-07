@@ -261,16 +261,38 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     res.clearCookie(TXN_COOKIE, { path: '/oauth' });
 
     if (!pend) {
-      res.status(400).send('Sign-in session expired or not found. Please retry the connection.');
+      logCallbackFailure('held_authorize_request_not_found');
+      res.status(400).type('html').send(renderMessage(
+        'Sign-in session expired',
+        'This sign-in took too long or was already completed. Start the connection again from the tool that asked.',
+      ));
       return;
     }
 
-    // Trust rejected the login (no role assignment / domain block).
+    // ClaudeCode 2026-08-06 07:14 PM PDT — Trust refused the IDENTITY (no role
+    // assignment for this address on the Connect app, or a domain block). This is
+    // NOT something the calling tool can retry its way out of — a person has to be
+    // granted access — so it gets a terminal page here, the same doctrine the
+    // Cancel landing already follows ("a refusal must not bounce into a new
+    // authorize"). Bouncing it back as a bare OAuth error was actively harmful:
+    // mcp-remote drops error_description and renders the refusal as the useless
+    // "Error: No authorization code received", which is what sent us hunting for a
+    // code bug when the real answer was a missing grant.
     if (ssoError) {
-      res.redirect(302, errorRedirect(pend.redirectUri, 'access_denied', ssoError, pend.state));
+      logCallbackFailure('identity_refused_by_trust', ssoError);
+      res.status(403).type('html').send(renderMessage(
+        'This account does not have access',
+        `${ssoError}. LifeSpace Connect refused the Google account you just signed in with. ` +
+        'Either sign in again with an address that has been granted access to LifeSpace Connect, ' +
+        'or ask an administrator to grant that address access. Nothing was connected.',
+      ));
       return;
     }
+    // The two below are technical/transient and the client CAN usefully retry, so
+    // they keep the spec-shaped error redirect. Both are now logged — this whole
+    // path used to fail in total silence, with nothing in Railway to look at.
     if (!ssoCode) {
+      logCallbackFailure('no_sso_code_returned');
       res.redirect(302, errorRedirect(pend.redirectUri, 'access_denied', 'No sign-in code returned', pend.state));
       return;
     }
@@ -278,7 +300,8 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     let identity: TrustIdentity;
     try {
       identity = await exchangeSsoCode(ssoCode);
-    } catch {
+    } catch (err) {
+      logCallbackFailure('sso_code_exchange_failed', err instanceof Error ? err.message : 'unknown');
       res.redirect(302, errorRedirect(pend.redirectUri, 'access_denied', 'Sign-in verification failed', pend.state));
       return;
     }
@@ -508,6 +531,15 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     `;
     return raw;
   }
+}
+
+// ClaudeCode 2026-08-06 07:16 PM PDT — every failure on the Trust return leg used
+// to be swallowed silently, so a real outage left NOTHING in Railway to read and
+// the only evidence was whatever the MCP client happened to print. One line per
+// failure, reason-coded. Never logs the sso_code, the txn, or any token — only
+// the branch that fired and a short human reason.
+function logCallbackFailure(reason: string, detail?: string): void {
+  console.error(`[connect] trust-callback failed: ${reason}${detail ? ` — ${detail}` : ''}`);
 }
 
 // ---------------------------------------------------------------------------

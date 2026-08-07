@@ -211,6 +211,40 @@ const { res: r2Res, out: rCb2 } = stubRes({ headers: { cookie: rCookie } });
 await restarted.handleTrustCallback({ headers: { cookie: rCookie }, query: {} } as unknown as Request, r2Res);
 assert('held request is single-use (replayed callback gets nothing)', rCb2.status === 400 && !rCb2.redirect);
 
+// ---------------------------------------------------------------------------
+// ClaudeCode 2026-08-06 07:20 PM PDT — REGRESSION: identity refused by Trust.
+// gausley@coachsimple.net has no role assignment on the lifespace-connect Trust
+// app, so Trust returns ?sso_error=Not authorized — no role assignment found.
+// That used to be bounced to the client as a bare `error=access_denied`, and
+// mcp-remote — which discards error_description — rendered it as "Error: No
+// authorization code received". Hours were spent hunting a code bug that did not
+// exist. An identity refusal is not client-retryable, so it now terminates HERE
+// with the reason on screen.
+const REFUSAL = 'Not authorized — no role assignment found';
+const { res: xRes, out: refusedAuth } = stubRes({ originalUrl: AUTHORIZE_QS, headers: {} });
+await provider.authorize(client, params, xRes);
+const xCookie = refusedAuth.cookies[refusedAuth.cookies.length - 1] ?? '';
+
+const { res: xcbRes, out: refused } = stubRes({ headers: { cookie: xCookie } });
+await provider.handleTrustCallback(
+  { headers: { cookie: xCookie }, query: { sso_error: REFUSAL } } as unknown as Request, xcbRes);
+
+assert('Trust identity refusal does NOT bounce to the client as a bare OAuth error', !refused.redirect);
+assert('Trust identity refusal terminates on Connect with 403', refused.status === 403, String(refused.status));
+assert('refusal page states the reason Trust gave', refused.html.includes(REFUSAL));
+assert('refusal page says what to do about it',
+  /granted access to LifeSpace Connect/.test(refused.html) && refused.html.includes('Nothing was connected'));
+
+// Technical/transient failures stay client-retryable, so they keep the spec-shaped
+// error redirect — only the identity refusal changed shape.
+const { res: yRes, out: noCodeAuth } = stubRes({ originalUrl: AUTHORIZE_QS, headers: {} });
+await provider.authorize(client, params, yRes);
+const yCookie = noCodeAuth.cookies[noCodeAuth.cookies.length - 1] ?? '';
+const { res: ycbRes, out: noCode } = stubRes({ headers: { cookie: yCookie } });
+await provider.handleTrustCallback({ headers: { cookie: yCookie }, query: {} } as unknown as Request, ycbRes);
+assert('a transient callback failure still redirects to the client', noCode.status === 302 &&
+  (noCode.redirect ?? '').startsWith('https://claude.ai/api/mcp/auth_callback?error=access_denied'), noCode.redirect);
+
 console.log('\n--- interstitial text (visible copy) ---');
 console.log(authorize.html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '')
   .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
