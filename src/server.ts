@@ -29,6 +29,7 @@ import * as flow from './services/flow.js';
 import * as tickets from './services/tickets.js';
 import * as site from './services/site.js';
 import { errText } from './client.js';
+import { startTokenRenewal } from './token-renewal.js';
 import type { ToolDef, ToolHandler } from './types.js';
 
 // -- ClaudeCode (2026-07-06): `lsp login` subcommand routing. When invoked as
@@ -70,3 +71,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(`lsp-mcp v0.1.0 running on stdio — ${allTools.length} tools across ${modules.length} services`);
+
+// -- ClaudeCode 2026-08-11 03:52 PM PDT: self-renewing folder token. Checks this
+// folder's LSP_TOKEN now and every 24h; inside 7 days of expiry it renews via
+// Trust, rewrites .mcp.json in place and swaps the bearer live. Non-blocking and
+// never throws — a renewal problem can only ever cost us a stderr warning.
+// stdio ONLY: the HTTP transport (Connect) is per-request-authed and has no
+// folder token to renew.
+startTokenRenewal();

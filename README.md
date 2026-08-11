@@ -69,6 +69,31 @@ Both write to `.mcp.json` in the current project directory. Restart Claude Code.
 
 Each client (Coach Simple, HarvestLoop, etc.) has its own tenant and its own JWT. If MCP were user-scoped (`~/.claude/settings.json`), every new session would overwrite the previous client's JWT. Project scope isolates each client's MCP config in its own `_git/` folder.
 
+## Self-renewing folder token
+
+The `LSP_TOKEN` in a project's `.mcp.json` is a 30-day agent JWT. The stdio server keeps it alive by itself — there is no mint-install-restart ceremony any more.
+
+**What happens:** on boot, and once every 24h while running, the server decodes its own token's expiry. Inside **7 days of expiry** it calls Trust `POST /v1/agents/renew`, and on success it:
+
+1. rewrites `env.LSP_TOKEN` in the `.mcp.json` that carries that exact token (atomic write; every other key and every other server entry is preserved untouched),
+2. swaps the bearer in the **running process**, so the current session heals without a restart,
+3. prints one line to stderr: `[lsp-token] LSP token renewed through <date>`.
+
+**Grace policy.** Trust accepts a renewal while the token is valid and for **7 days after it expires** — so a 30-day token gets a 14-day window to self-heal, which covers a Mac that slept through a vacation or a scheduled routine that missed its slot. Past that, a human mints a replacement with `POST /v1/agents/tokens`. Renewal **preserves scope exactly** (tenant, role, modules) — it is a lifetime extension, never a re-grant; widening scope still requires a fresh mint. Trust refuses a renewal for a revoked session, a blocked user or tenant, a non-agent subject, or a token already renewed once (each token renews exactly one generation).
+
+**When renewal fails,** the server keeps running on the old token, prints a loud stderr warning naming the expiry date, and emails one alert (`A folder token could not renew and dies <date>: <folder>`) — at most once per 72h per folder. The token value itself is never printed, logged, or emailed.
+
+**Controls:**
+
+| Env var | Effect |
+|---------|--------|
+| `LSP_TOKEN_AUTORENEW=0` | Disable self-renewal entirely. |
+| `LSP_NO_REFRESH=1` | Per-run worker children: never renew, never write. Enforced — the Execute worker is the single refresher. |
+| `LSP_MCP_CONFIG_PATH` | Point at the `.mcp.json` to rewrite. Default: walk up from cwd and match the entry whose `LSP_TOKEN` is byte-identical to the booted one. |
+| `LSP_RENEWAL_ALERT_EMAIL` | Recipient for the failure alert. |
+
+This is distinct from the in-memory refresh lifecycle in `src/auth.ts` (which renews the *access* token on a 401 using a revocable refresh token in `~/.lsp`). That one keeps a live session from dying mid-work; this one keeps the credential *on disk* current so a brand-new process still boots authenticated.
+
 ## Develop
 
 ```bash
