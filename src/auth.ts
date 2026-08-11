@@ -60,6 +60,17 @@ export function noRefreshMode(): boolean {
   return process.env.LSP_NO_REFRESH === '1';
 }
 
+// -- ClaudeCode 2026-08-11 03:52 PM PDT: adopt a freshly renewed STATIC token
+// (token-renewal.ts) into the running process, so a renewal takes effect without a
+// restart. Updating process.env.LSP_TOKEN is what makes it stick: authFor() and
+// currentBearer() both read it, as does the next renewal check. The access-token
+// slot is cleared rather than set — the renewed 30-day token is now the freshest
+// credential we hold, and any stale short-lived access token must not shadow it.
+export function adoptRenewedToken(freshToken: string): void {
+  process.env.LSP_TOKEN = freshToken;
+  mem.accessToken = null;
+}
+
 function decodeClaims(jwt: string): Record<string, any> | null {
   try {
     return JSON.parse(Buffer.from(jwt.split('.')[1] ?? '', 'base64').toString());
