@@ -79,15 +79,26 @@ export function seesAllModules(claims: CallerClaims): boolean {
   return claims.role !== 'user';
 }
 
+// ClaudeCode 2026-08-13 02:36 PM PDT — "which tenant am I in?" is ALWAYS
+// answerable. lsp_trust_whoami lives in the `trust` module, which is admin-only,
+// so a role=user connector could hold 12 granted modules and still have no way to
+// state the tenant it is scoped to. That is exactly the question the multi-tenant
+// picker bug made people ask ("did I connect to Coach Simple or Curriculum
+// Rebuild?"), and the answer must not depend on a module grant. It reads the
+// caller's own token and returns nothing that is not already the caller's — no
+// tenant data crosses a boundary by exposing it.
+export const ALWAYS_EXPOSED_TOOLS = new Set<string>(['lsp_trust_whoami']);
+
 export function toolsForClaims(claims: CallerClaims): ToolDef[] {
   if (seesAllModules(claims)) return allTools;
   const granted = new Set(claims.modules ?? []);
-  return allTools.filter((t) => granted.has(TOOL_MODULE[t.name]));
+  return allTools.filter((t) => ALWAYS_EXPOSED_TOOLS.has(t.name) || granted.has(TOOL_MODULE[t.name]));
 }
 
 /** Is this tool callable by the caller? Mirrors toolsForClaims for CallTool. */
 export function canCallTool(name: string, claims: CallerClaims): boolean {
   if (seesAllModules(claims)) return true;
+  if (ALWAYS_EXPOSED_TOOLS.has(name)) return true;
   const granted = new Set(claims.modules ?? []);
   return granted.has(TOOL_MODULE[name]);
 }

@@ -20,7 +20,14 @@ import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { sql, sha256, jsonb } from './db.js';
 import { ssoStartUrl, exchangeSsoCode, mintAccessToken, trustPublicKey, type TrustIdentity } from './trust.js';
-import { getSubtreeTree, getSubtreeIds, renderConsent, renderMessage, tenantName, type TenantNode } from './tenants.js';
+import { getSubtreeIds, renderConsent, renderMessage, tenantName, type TenantNode } from './tenants.js';
+// ClaudeCode 2026-08-13 02:08 PM PDT — the picker's list is now built from ALL of
+// the identity's role rows on the Connect app, not the single row Trust's SSO
+// exchange happened to return. See memberships.ts for the bug this closes.
+import {
+  resolveMemberships, buildChoices, pickerNeeded, resolveGrantForChoice,
+  type Membership, type Grant,
+} from './memberships.js';
 // ClaudeCode 2026-08-06 10:55 AM PDT — the authorize interstitial ("page before
 // the page") + its cancelled landing.
 import { renderInterstitial, renderCancelled, describeOrigin, clean, LABEL_MAX, HINT_MAX } from './interstitial.js';
@@ -73,6 +80,12 @@ interface ConsentPending {
   resource?: string;
   identity: TrustIdentity;
   homeTenant: string;
+  // ClaudeCode 2026-08-13 02:10 PM PDT — the identity's full membership set and
+  // the exact tenant ids offered on the page, captured SERVER-SIDE when the
+  // picker was rendered. The POST is validated against this list, so a posted
+  // tenant id can never widen the choice beyond what was actually offered.
+  memberships?: Membership[];
+  choiceIds?: string[];
   expiresAt: number;
 }
 // ClaudeCode 2026-08-06 05:34 PM PDT — consent state is durable too. An admin
@@ -306,24 +319,29 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       return;
     }
 
-    // -- ClaudeCode (2026-07-09, G1 security fix): tenant consent. A plain
-    // role=user is PINNED to their own tenant (no picker) — issue the code
-    // straight away. An admin gets the subtree picker; the auth code is issued
-    // only after they choose (handleConsent), so the token is scoped to the
-    // CHOSEN tenant instead of silently minting at the role's home (root).
+    // -- ClaudeCode (2026-07-09, G1 security fix): tenant consent — the auth code
+    // is issued only after the person chooses, so the token is scoped to the
+    // CHOSEN tenant instead of silently minting at the role's home.
+    //
+    // ClaudeCode 2026-08-13 02:14 PM PDT — the gate is now MEMBERSHIP COUNT, not
+    // role. It used to be `if (!isAdmin) → skip the picker`, on the assumption
+    // that a role=user has exactly one tenant. That assumption is false: an
+    // identity can hold several role rows on the app (jon@coachsimple.net holds
+    // user@Coach Simple AND user@Curriculum Rebuild), and the old gate handed
+    // those people whichever row Trust's SSO exchange happened to return — no
+    // page, no choice, no way to tell it had happened. Now the choice list is the
+    // union of every membership (plus descendants of the admin ones), and ANY
+    // identity with ≥2 tenants to choose between gets the picker.
     const homeTenant = identity.tenant_id || '';
-    const isAdmin = identity.role === 'admin' || identity.role === 'super_admin';
-    if (!isAdmin) {
-      await this.issueCodeAndRedirect(res, pend, identity, homeTenant);
-      return;
-    }
+    const memberships = await resolveMemberships(identity.email);
+    const tree = await buildChoices(memberships);
 
-    // ClaudeCode 2026-08-06 10:58 AM PDT — single-membership identities skip the
-    // picker: an admin whose subtree is just their own tenant has nothing to
-    // choose, so don't make them click through a one-option page.
-    const tree = await getSubtreeTree(homeTenant);
-    if (tree.length <= 1) {
-      await this.issueCodeAndRedirect(res, pend, identity, homeTenant);
+    if (!pickerNeeded(tree)) {
+      // Nothing to choose. Keep the single tenant we know about — the membership
+      // row if there is one, else the tenant Trust returned.
+      const only = tree[0]?.id || homeTenant;
+      await this.issueCodeAndRedirect(res, pend, identity,
+        resolveGrantForChoice(memberships, only, identity));
       return;
     }
 
@@ -338,6 +356,8 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       resource: pend.resource,
       identity,
       homeTenant,
+      memberships,
+      choiceIds: tree.map((t) => t.id),
       expiresAt: consentExpiresAt,
     } satisfies ConsentPending, consentExpiresAt);
     // A tenant_hint that matches one of the tenants this person can choose
@@ -358,13 +378,20 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       return;
     }
 
-    // The chosen tenant must be the home tenant or a descendant of it (belt —
-    // Trust re-validates at mint). Never trust an arbitrary posted tenant id.
+    // The chosen tenant must be one the page actually OFFERED. Never trust an
+    // arbitrary posted tenant id.
+    // ClaudeCode 2026-08-13 02:20 PM PDT — the check is against `choiceIds`, the
+    // server-side list captured when the picker was rendered. It used to be
+    // `getSubtreeIds(homeTenant)`, which was both too narrow (it rejected a
+    // sibling membership the person legitimately holds) and tied to the one
+    // tenant Trust's SSO exchange returned. Older consent rows written before
+    // this deploy carry no choiceIds — those still fall back to the subtree test.
+    const memberships = cp.memberships ?? [];
     let chosenTenant = cp.homeTenant;
     if (chosen && chosen !== cp.homeTenant) {
-      const subtree = await getSubtreeIds(cp.homeTenant);
-      if (!subtree.has(chosen)) {
-        res.status(403).type('html').send(renderMessage('Not allowed', 'You can only connect to a tenant inside your own subtree.'));
+      const allowed = cp.choiceIds ? new Set(cp.choiceIds) : await getSubtreeIds(cp.homeTenant);
+      if (!allowed.has(chosen)) {
+        res.status(403).type('html').send(renderMessage('Not allowed', 'You can only connect to a tenant you were offered.'));
         return;
       }
       chosenTenant = chosen;
@@ -378,17 +405,22 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       resource: cp.resource,
       expiresAt: Date.now() + AUTH_CODE_TTL_MS,
     };
-    await this.issueCodeAndRedirect(res, pend, cp.identity, chosenTenant);
+    await this.issueCodeAndRedirect(res, pend, cp.identity,
+      resolveGrantForChoice(memberships, chosenTenant, cp.identity));
   }
 
   // Issue a single-use auth code carrying the verified identity + the CHOSEN
-  // tenant, then 302 back to the MCP client. tenant_id here is the tenant the
-  // token will be scoped to (home for users, picked for admins).
+  // tenant, then 302 back to the MCP client.
+  // ClaudeCode 2026-08-13 02:24 PM PDT — takes the whole GRANT now, not just a
+  // tenant id. The row used to record `identity.role` / `identity.modules` — the
+  // role and modules of whichever membership Trust's SSO exchange returned —
+  // even when the person had chosen a DIFFERENT tenant, so a two-membership
+  // identity got the other row's modules stamped on its session.
   private async issueCodeAndRedirect(
     res: Response,
     pend: PendingAuthorization,
     identity: TrustIdentity,
-    chosenTenant: string,
+    grant: Grant,
   ): Promise<void> {
     const code = crypto.randomBytes(32).toString('hex');
     await sql`
@@ -396,8 +428,8 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
         code_hash, client_id, tenant_id, user_id, user_email, role, modules,
         pkce_challenge, redirect_uri, client_state, resource, expires_at
       ) VALUES (
-        ${sha256(code)}, ${pend.clientId}, ${chosenTenant || null}, ${identity.email},
-        ${identity.email}, ${identity.role}, ${jsonb(identity.modules ?? [])},
+        ${sha256(code)}, ${pend.clientId}, ${grant.tenantId || null}, ${identity.email},
+        ${identity.email}, ${grant.role}, ${jsonb(grant.modules ?? [])},
         ${pend.codeChallenge}, ${pend.redirectUri}, ${pend.state ?? null}, ${pend.resource ?? null},
         ${new Date(Date.now() + AUTH_CODE_TTL_MS)}
       )
@@ -435,7 +467,7 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
 
     // The code row's tenant_id is the tenant the user picked at consent — mint
     // scoped to it (Trust down-scopes if it's a descendant of their home).
-    const minted = await mintAccessToken(r.user_email as string, ACCESS_TTL_SECONDS, r.tenant_id as string);
+    const minted = await mintForChosenTenant(r.user_email as string, r.tenant_id as string);
     const refresh = await this.issueRefreshToken(client.client_id, {
       userId: r.user_id as string,
       email: r.user_email as string,
@@ -469,7 +501,7 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     // a 403 here and the session dies (spec acceptance check #5). Re-mint for the
     // SAME chosen tenant stored on the refresh row — never silently re-widen to
     // the user's home tenant (order G1 security fix).
-    const minted = await mintAccessToken(r.user_email as string, ACCESS_TTL_SECONDS, r.tenant_id as string);
+    const minted = await mintForChosenTenant(r.user_email as string, r.tenant_id as string);
 
     // Rotate the refresh token (30d rolling): burn the old, issue a new one.
     await sql`UPDATE ls_connect_tokens SET revoked_at = now() WHERE token_hash = ${tokenHash}`;
@@ -538,6 +570,31 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
 // the only evidence was whatever the MCP client happened to print. One line per
 // failure, reason-coded. Never logs the sso_code, the txn, or any token — only
 // the branch that fired and a short human reason.
+// ClaudeCode 2026-08-13 02:30 PM PDT — mint for the tenant the person CHOSE, and
+// make a refusal legible.
+//
+// KNOWN UPSTREAM GAP (not fixable inside this repo — Trust owns it): Trust's
+// /v1/mint resolves the caller's role row with an UNORDERED single-row select
+// (Trust mint.ts resolveRole — `const [exact] = await db.select()…` with no
+// ORDER BY / LIMIT, unlike auth.ts which orders by role rank then row id). For an
+// identity holding SEVERAL rows on the app, which row that returns is Postgres
+// heap order — it is why jon@coachsimple.net minted Coach Simple at 20:45 and
+// Curriculum Rebuild at 20:50 from identical sign-ins. When the row it picks is
+// not the tenant the person chose, mint takes its cross-tenant branch and refuses
+// a role=user with "Only admins may scope a connection to another tenant". Until
+// Trust's resolveRole is chosen-tenant-aware, that refusal is reported honestly
+// here as an OAuth invalid_grant with the reason on it, instead of surfacing as
+// an opaque 500 from the token endpoint.
+async function mintForChosenTenant(email: string, chosenTenant: string) {
+  try {
+    return await mintAccessToken(email, ACCESS_TTL_SECONDS, chosenTenant);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'mint failed';
+    logCallbackFailure('mint_refused_for_chosen_tenant', msg);
+    throw new InvalidGrantError(`Could not issue a token for the selected tenant: ${msg}`);
+  }
+}
+
 function logCallbackFailure(reason: string, detail?: string): void {
   console.error(`[connect] trust-callback failed: ${reason}${detail ? ` — ${detail}` : ''}`);
 }
