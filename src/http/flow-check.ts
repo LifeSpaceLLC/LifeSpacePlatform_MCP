@@ -12,6 +12,14 @@ import { renderConsent } from './tenants.js';
 // ClaudeCode 2026-08-06 05:40 PM PDT — the durable transaction store, swapped for
 // an in-memory one so this check stays offline (no Postgres, no Trust, no Google).
 import { MemoryTxnStore, setTxnStore } from './txn-store.js';
+// ClaudeCode 2026-08-13 02:38 PM PDT — the multi-membership choice logic. These
+// are the real functions the OAuth flow calls; only the trust_app_roles lookup is
+// stubbed, so the union/gate/grant rules under test are the shipped ones.
+import {
+  buildChoices, pickerNeeded, resolveGrantForChoice, grantsSubtreeReach,
+  type Membership,
+} from './memberships.js';
+import { toolsForClaims, canCallTool } from './tools.js';
 
 process.env.CONNECT_BASE_URL ??= 'https://connect.lifespace.com';
 process.env.TRUST_BASE_URL ??= 'https://trust.lifespace.com';
@@ -244,6 +252,60 @@ const { res: ycbRes, out: noCode } = stubRes({ headers: { cookie: yCookie } });
 await provider.handleTrustCallback({ headers: { cookie: yCookie }, query: {} } as unknown as Request, ycbRes);
 assert('a transient callback failure still redirects to the client', noCode.status === 302 &&
   (noCode.redirect ?? '').startsWith('https://claude.ai/api/mcp/auth_callback?error=access_denied'), noCode.redirect);
+
+// ---------------------------------------------------------------------------
+// ClaudeCode 2026-08-13 02:40 PM PDT — REGRESSION: the multi-membership identity.
+// jon@coachsimple.net holds TWO role rows on the Connect app (user@Coach Simple
+// and user@Curriculum Rebuild, 12 modules each) and got NO picker: the gate was
+// `role === 'admin'`, and the list was the winning row's SUBTREE — which for a
+// role=user is just their own tenant, so two sibling MEMBERSHIPS could never
+// merge into one list. He was silently connected to whichever row Trust's SSO
+// exchange returned. These checks pin the union list, the count-based gate, and
+// the grant carried by the chosen row.
+const JON: Membership[] = [
+  { tenantId: 'cs-01ecd85f', tenantName: 'Coach Simple', role: 'user', modules: ['projects', 'knowledge'] },
+  { tenantId: 'cr-4162bcb9', tenantName: 'Curriculum Rebuild', role: 'user', modules: ['tickets'] },
+];
+const SOLO: Membership[] = [JON[0]];
+
+const jonChoices = await buildChoices(JON);
+assert('two-membership identity is offered BOTH tenants',
+  jonChoices.length === 2 && jonChoices.map((c) => c.id).join(',') === 'cs-01ecd85f,cr-4162bcb9',
+  jonChoices.map((c) => c.name).join(' | '));
+assert('the picker renders for a plain role=user with two memberships', pickerNeeded(jonChoices));
+assert('both tenant NAMES reach the page',
+  renderConsent('c3', 'jon@coachsimple.net', 'cs-01ecd85f', jonChoices, 'Claude').includes('Coach Simple')
+  && renderConsent('c3', 'jon@coachsimple.net', 'cs-01ecd85f', jonChoices, 'Claude').includes('Curriculum Rebuild'));
+
+const soloChoices = await buildChoices(SOLO);
+assert('single-membership identity still skips the picker',
+  soloChoices.length === 1 && !pickerNeeded(soloChoices));
+
+// The grant follows the CHOSEN row — this is the half of the bug that was
+// invisible: the auth code used to record the OTHER row's role + modules.
+const gCS = resolveGrantForChoice(JON, 'cs-01ecd85f', { role: 'user', modules: ['tickets'] });
+assert('choosing Coach Simple grants Coach Simple\'s modules, not the other row\'s',
+  gCS.tenantId === 'cs-01ecd85f' && gCS.modules.join(',') === 'projects,knowledge', gCS.modules.join(','));
+const gCR = resolveGrantForChoice(JON, 'cr-4162bcb9', { role: 'user', modules: ['projects', 'knowledge'] });
+assert('choosing Curriculum Rebuild grants Curriculum Rebuild\'s modules',
+  gCR.tenantId === 'cr-4162bcb9' && gCR.modules.join(',') === 'tickets', gCR.modules.join(','));
+assert('a role=user membership reaches exactly one tenant (no subtree)', !grantsSubtreeReach('user'));
+assert('an admin membership still reaches its subtree',
+  grantsSubtreeReach('admin') && grantsSubtreeReach('super_admin'));
+
+// ---------------------------------------------------------------------------
+// ClaudeCode 2026-08-13 02:44 PM PDT — "which tenant am I in?" is always
+// answerable. lsp_trust_whoami is in the admin-only `trust` module, so a
+// role=user connector could hold a dozen granted modules and still be unable to
+// state its own tenant — the exact question this bug made people ask.
+const userClaims = { role: 'user', modules: ['projects'] };
+const names = toolsForClaims(userClaims).map((t) => t.name);
+assert('role=user sees lsp_trust_whoami even without the trust module', names.includes('lsp_trust_whoami'));
+assert('role=user can CALL lsp_trust_whoami', canCallTool('lsp_trust_whoami', userClaims));
+assert('the whoami carve-out does not leak the rest of the trust module',
+  !names.includes('lsp_trust_users_list') && !canCallTool('lsp_trust_users_list', userClaims));
+assert('module filtering is otherwise unchanged',
+  names.some((n) => n.startsWith('lsp_projects_')) && !names.some((n) => n.startsWith('lsp_keys_')));
 
 console.log('\n--- interstitial text (visible copy) ---');
 console.log(authorize.html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '')
