@@ -75,6 +75,9 @@ function seatLines(s: RegistrationSummary): string {
 export function renderVerifiedBlock(s: RegistrationSummary): string {
   const st = statusCopy(s.status);
   if (s.status === 'unknown') {
+    // An id WAS presented and we hold no record of it. That is different from a
+    // plain legacy connection: something claimed to be a registration and isn't,
+    // so this one does not get to continue.
     return `<div class="danger">
       <b>Unregistered connection</b><span class="tag">nothing verified</span>
       <p class="note">${esc(st.blurb)} Do not sign in unless you know exactly which session asked for this. Ask an administrator to register the connection and use the address it gives you.</p>
@@ -147,7 +150,7 @@ export function renderInterstitial(o: InterstitialOptions): string {
   // the registration is active (or when there is no registration at all — the
   // legacy path, which keeps working so nothing breaks today).
   const summary = o.summary;
-  const verified = summary ? renderVerifiedBlock(summary) : '';
+  const verified = summary ? renderVerifiedBlock(summary) : renderUnregisteredNotice();
   const st = summary ? statusCopy(summary.status) : undefined;
   const canContinue = !summary || st!.ok;
   const whatItGets = summary && summary.status === 'active'
@@ -188,6 +191,19 @@ export function renderInterstitial(o: InterstitialOptions): string {
         else { document.execCommand('copy'); done(); }
       });
     </script>`);
+}
+
+// ClaudeCode 2026-08-19 12:26 PM PDT — the LEGACY notice. A sign-in that arrived
+// on the plain /mcp + /authorize path carries no registration at all, so there is
+// genuinely nothing to verify: no session, no folder, no tenant decided in
+// advance, and the tenant picker after sign-in is what decides. It still WORKS —
+// nothing in the field breaks today — but it says so in red rather than looking
+// like a page that checked something.
+export function renderUnregisteredNotice(): string {
+  return `<div class="danger">
+    <b>Unregistered connection</b><span class="tag">nothing verified</span>
+    <p class="note">This connection was not registered in advance, so LifeSpace cannot tell you which session or folder asked for it, or which tenant it is for — you will choose the tenant yourself after signing in. It still works. For a sign-in page that states these facts from LifeSpace's own records, ask an administrator to register the connection and use the address it gives you.</p>
+  </div>`;
 }
 
 // The Cancel landing. Deliberately terminal: no redirect back to the client,

@@ -401,6 +401,11 @@ const unregistered = renderInterstitial({
 assert('a LEGACY unregistered sign-in still offers Continue (nothing breaks today)',
   unregistered.includes('href="/oauth/continue"'));
 assert('a legacy sign-in shows no verified block', !unregistered.includes('class="verified"'));
+assert('a legacy sign-in carries the red "unregistered connection — nothing verified" notice',
+  unregistered.includes('Unregistered connection') && unregistered.includes('nothing verified')
+  && unregistered.includes('class="danger"'));
+assert('the legacy notice is honest that it still works',
+  unregistered.includes('It still works'));
 
 const unknown = renderInterstitial({
   clientName: 'Claude', continueUrl: '/oauth/continue', cancelUrl: '/oauth/cancel',
