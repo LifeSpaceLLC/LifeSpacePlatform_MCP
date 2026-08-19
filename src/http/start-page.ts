@@ -31,6 +31,16 @@ function copyBlock(id: string, value: string, label: string): string {
     .replace(/</g, '&lt;')}</pre><button class="copybtn" data-copy="${id}" aria-label="${label}">Copy</button></div>`;
 }
 
+// ClaudeCode 2026-08-19 02:20 PM PDT — the verified sign-in page. A registered
+// connection is the recommended path now: the address in .mcp.json carries a
+// registration id, so the page states session / folder / tenant / seat holders /
+// validity from LifeSpace's own records BEFORE anyone clicks into Google.
+const VERIFIED_STEP =
+  'Ask your administrator to <b>register this connection</b> (Admin → Tenants → Connections). They give you an address of the form <code>https://connect.lifespace.com/mcp/r/&lt;id&gt;</code> — use that instead of the plain <code>/mcp</code> address. ' +
+  'The sign-in page then shows a <b>green verified block</b>: which session and folder the connection belongs to, which tenant it connects to, <b>which Google account(s) hold a seat there</b> (so you can pick the right Chrome profile before you click), and whether the registration is still active. ' +
+  'A registered connection is <b>locked to its tenant</b> — there is no tenant picker, and signing in with an account that has no seat on that tenant stops with a plain refusal instead of quietly connecting you somewhere else. ' +
+  'The plain <code>/mcp</code> address still works, but its sign-in page says <i>“unregistered connection — nothing verified”</i> in red, because nothing about it can be checked.';
+
 const GOOGLE_STEP =
   'A browser window opens. Click <b>Sign in with Google</b> and use your <b>work Google account</b> — the same one your team uses for LifeSpace.';
 const TENANT_STEP =
@@ -54,9 +64,10 @@ const TAB_CONTENT: Record<StartApp, { label: string; intro: string; steps: strin
     steps: [
       step(1, 'Open Cowork settings', 'In Cowork, open <b>Settings → Connectors</b> and click <b>Add connector</b>.'),
       step(2, 'Paste the LifeSpace address', `Paste this URL into the connector form:${copyBlock('cw-url', MCP_URL, 'Copy the connector URL')}`),
-      step(3, 'Sign in', GOOGLE_STEP),
-      step(4, 'Pick your team (admins only)', TENANT_STEP),
-      step(5, 'Done', 'Your LifeSpace tools now appear in Cowork. Try asking: <i>“list my projects”</i>. To switch teams later, remove the connector and add it again — you’ll get the sign-in (and team picker) fresh.'),
+      step(3, 'Better: use a registered connection', VERIFIED_STEP),
+      step(4, 'Sign in', GOOGLE_STEP),
+      step(5, 'Pick your team (admins only)', `${TENANT_STEP} A <b>registered</b> connection never shows this screen — its tenant was decided when the connection was registered.`),
+      step(6, 'Done', 'Your LifeSpace tools now appear in Cowork. Try asking: <i>“list my projects”</i>. To switch teams later, remove the connector and add it again — you’ll get the sign-in (and team picker) fresh.'),
     ].join(''),
   },
   'claude-desktop': {
@@ -75,10 +86,11 @@ const TAB_CONTENT: Record<StartApp, { label: string; intro: string; steps: strin
     intro: 'One command per project folder. In Claude Code, one folder = one tenant.',
     steps: [
       step(1, 'Add the connector to your project', `Open a terminal in your project folder and run:${copyBlock('cc-cmd', CLAUDE_CODE_CMD, 'Copy the command')}This writes a project-scoped <code>.mcp.json</code> — the connection belongs to this folder only.`),
-      step(2, 'Authenticate', `Start <code>claude</code>, type ${copyBlock('cc-mcp', '/mcp', 'Copy /mcp')} choose <b>lsp</b>, then <b>Authenticate</b>. ${GOOGLE_STEP}`),
-      step(3, 'Pick your team (admins only)', TENANT_STEP),
-      step(4, 'Label the sign-in page (optional)', LABEL_STEP),
-      step(5, 'Working across teams?', 'Repeat these steps in each project folder. Each folder signs in on its own, so different folders can point at different tenants — that’s the intended pattern, not a workaround.'),
+      step(2, 'Better: use a registered connection', VERIFIED_STEP),
+      step(3, 'Authenticate', `Start <code>claude</code>, type ${copyBlock('cc-mcp', '/mcp', 'Copy /mcp')} choose <b>lsp</b>, then <b>Authenticate</b>. ${GOOGLE_STEP}`),
+      step(4, 'Pick your team (admins only)', `${TENANT_STEP} A <b>registered</b> connection never shows this screen.`),
+      step(5, 'Label the sign-in page (optional, legacy)', LABEL_STEP),
+      step(6, 'Working across teams?', 'Repeat these steps in each project folder. Each folder signs in on its own, so different folders can point at different tenants — that’s the intended pattern, not a workaround.'),
     ].join(''),
   },
   codex: {
@@ -100,6 +112,8 @@ const FOR_THE_AI = `<div class="ai">
 <ul>
   <li><b>What this is.</b> LifeSpace Connect is the platform's OAuth 2.1 server at <code>connect.lifespace.com</code> — the only host you connect to. The config it writes is scoped to one project folder.</li>
   <li><b>What the consent flow shows.</b> First an interstitial naming the tool that requested the connection and the origin it derived from the redirect address (anything it can't verify is labelled unverified). Then Google sign-in. Then a tenant picker the person confirms — that choice decides which tenant is connected.</li>
+  <li><b>Prefer a registered connection.</b> If the address you were given looks like <code>/mcp/r/&lt;id&gt;</code>, the sign-in page will show a green <b>verified</b> block naming the session, folder, tenant, the accounts holding a seat, and the registration's validity — all read from LifeSpace's server records, none of it from whoever asked. Read that block aloud to the person before they sign in, and tell them which account to be signed in as. A plain <code>/mcp</code> address shows a red "unregistered connection — nothing verified" notice; say so rather than glossing over it.</li>
+  <li><b>Never open the browser yourself.</b> Print the sign-in URL and the verified summary (fetch <code>GET /connect/v1/registrations/&lt;id&gt;/summary</code> — public, non-secret) and let the person click it in the Chrome profile they choose.</li>
   <li><b>Google scopes.</b> It never requests Gmail, Drive, or Calendar scopes on the Google account. Sign-in is identity only; LifeSpace reads no Google data from it.</li>
   <li><b>Verify, don't trust.</b> Let the browser open normally and read the consent screen before anyone approves. If it doesn't match this description, stop and say so.</li>
   <li><b>Access is bounded.</b> One tenant, only the modules that tenant granted, revocable by an admin at any time.</li>

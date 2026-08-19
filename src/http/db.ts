@@ -91,11 +91,45 @@ export const DDL: string[] = [
     created_at timestamptz NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS idx_connect_txns_expires ON ls_connect_txns(expires_at)`,
+
+  // ClaudeCode 2026-08-19 12:22 PM PDT — CONNECTION REGISTRATIONS. The row that
+  // makes the sign-in page say something VERIFIED. Before this, everything the
+  // interstitial could show about "which session / which folder / which tenant"
+  // was caller-typed text off the /authorize URL, marked UNVERIFIED — and the
+  // standard connector clients (mcp-remote, Claude Code's http transport) build
+  // that URL themselves from our metadata, so in practice not even that text
+  // arrived ("no label given / Requested by: your computer").
+  //
+  // A registration is created by a tenant admin (Admin UI / API / onboarding),
+  // BEFORE any sign-in, and its id travels in the RESOURCE URL itself
+  // (`/mcp/r/<registration_id>`), which the client discovers as OAuth metadata.
+  // The id therefore arrives at /authorize structurally, not as a query param
+  // anyone can type — which is what makes the page's claims checkable.
+  `CREATE TABLE IF NOT EXISTS ls_connect_registrations (
+    registration_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL,
+    session_label text NOT NULL,
+    folder_label text,
+    created_by_user text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz,
+    revoked_at timestamptz,
+    last_used_at timestamptz
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_connect_registrations_tenant ON ls_connect_registrations(tenant_id)`,
+
+  // Additive: which registration a code / token was issued under (audit — spec
+  // mechanism #6). NULL = a legacy unregistered connection, which still works.
+  `ALTER TABLE ls_connect_codes  ADD COLUMN IF NOT EXISTS registration_id uuid`,
+  `ALTER TABLE ls_connect_tokens ADD COLUMN IF NOT EXISTS registration_id uuid`,
 ];
 
 export async function applySchema(): Promise<void> {
   for (const stmt of DDL) {
-    const label = stmt.match(/CREATE (?:TABLE|(?:UNIQUE )?INDEX) IF NOT EXISTS (\S+)/)?.[1] ?? 'stmt';
+    // ClaudeCode 2026-08-19 12:22 PM PDT — also label ALTER TABLE ... ADD COLUMN steps.
+    const label = stmt.match(/CREATE (?:TABLE|(?:UNIQUE )?INDEX) IF NOT EXISTS (\S+)/)?.[1]
+      ?? stmt.match(/ALTER TABLE\s+(\S+)\s+ADD COLUMN IF NOT EXISTS\s+(\S+)/)?.slice(1, 3).join('.')
+      ?? 'stmt';
     process.stdout.write(`→ ${label} ... `);
     await sql.unsafe(stmt);
     process.stdout.write('OK\n');
