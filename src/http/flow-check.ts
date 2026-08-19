@@ -7,7 +7,12 @@
 // signed-in email prominently. Run: npx tsx src/http/flow-check.ts
 import type { Request, Response } from 'express';
 import { ConnectOAuthProvider } from './oauth-provider.js';
-import { describeOrigin, clean, LABEL_MAX } from './interstitial.js';
+import {
+  describeOrigin, clean, LABEL_MAX,
+  // ClaudeCode 2026-08-19 02:06 PM PDT — the verified sign-in block + its gates.
+  renderInterstitial, renderVerifiedBlock, renderSeatRefused, statusCopy,
+} from './interstitial.js';
+import { registrationIdFromPath, isRegistrationId, resourceUrl, authorizeUrlFor, issuerFor, type RegistrationSummary } from './registrations.js';
 import { renderConsent } from './tenants.js';
 // ClaudeCode 2026-08-06 05:40 PM PDT — the durable transaction store, swapped for
 // an in-memory one so this check stays offline (no Postgres, no Trust, no Google).
@@ -306,6 +311,135 @@ assert('the whoami carve-out does not leak the rest of the trust module',
   !names.includes('lsp_trust_users_list') && !canCallTool('lsp_trust_users_list', userClaims));
 assert('module filtering is otherwise unchanged',
   names.some((n) => n.startsWith('lsp_projects_')) && !names.some((n) => n.startsWith('lsp_keys_')));
+
+// ---------------------------------------------------------------------------
+// ClaudeCode 2026-08-19 02:08 PM PDT — VERIFIED SIGN-IN PAGE. The whole point of
+// the registration is that the page stops repeating caller-typed text and starts
+// stating server records. These checks pin (a) that the id can only arrive
+// structurally, (b) that each validity state renders and gates Continue the way
+// it claims to, and (c) that a seat mismatch is a hard stop, not a fallback.
+const REG_ID = '7f3a1c92-4b8e-4d21-9a6f-2c5e8b10d4a3';
+
+assert('a registration id is read off the resource path',
+  registrationIdFromPath(`/mcp/r/${REG_ID}`) === REG_ID);
+assert('a registration id is read off the authorize path',
+  registrationIdFromPath(`/authorize/r/${REG_ID}?client_id=x`) === REG_ID);
+assert('a registration id is read off an absolute RFC 8707 resource URL',
+  registrationIdFromPath(`https://connect.lifespace.com/mcp/r/${REG_ID}`) === REG_ID);
+// The id must NOT be forgeable through the query string — that is the entire
+// difference between this page and the 08-06 "unverified" one.
+assert('a ?registration_id= query param is NOT a registration',
+  registrationIdFromPath(`/authorize?registration_id=${REG_ID}`) === undefined);
+assert('a non-uuid path segment is not a registration',
+  registrationIdFromPath('/mcp/r/not-a-uuid') === undefined && !isRegistrationId('not-a-uuid'));
+assert('the legacy /mcp path carries no registration',
+  registrationIdFromPath('/mcp') === undefined);
+assert('resource / authorize / issuer URLs agree on the id',
+  resourceUrl(REG_ID).endsWith(`/mcp/r/${REG_ID}`)
+  && authorizeUrlFor(REG_ID).endsWith(`/authorize/r/${REG_ID}`)
+  && issuerFor(REG_ID).endsWith(`/r/${REG_ID}`));
+
+const SUMMARY: RegistrationSummary = {
+  registration_id: REG_ID,
+  status: 'active',
+  session_label: 'CS - Coach Simple - Platform work',
+  folder_label: '~/_git/CoachSimple',
+  tenant: { id: '01ecd85f-0000-0000-0000-000000000000', short_id: '01ecd85f', name: 'Coach Simple' },
+  seats: [
+    { email: 'gausley@coachsimple.net', role: 'admin', kind: 'account' },
+    { email: '*@coachsimple.net', role: 'user', kind: 'domain' },
+  ],
+  created_at: '2026-08-19T18:00:00.000Z',
+  created_by: 'gausley@coachsimple.net',
+  expires_at: null,
+  revoked_at: null,
+  last_used_at: null,
+  resource_url: resourceUrl(REG_ID),
+  sign_in_url: authorizeUrlFor(REG_ID),
+};
+
+const verified = renderVerifiedBlock(SUMMARY);
+assert('the verified block names the session', verified.includes('CS - Coach Simple - Platform work'));
+assert('the verified block names the folder', verified.includes('~/_git/CoachSimple'));
+assert('the verified block names the tenant + short id',
+  verified.includes('Coach Simple') && verified.includes('01ecd85f'));
+assert('the verified block names the seat holder to sign in as',
+  verified.includes('gausley@coachsimple.net'));
+assert('a domain grant is shown as a domain grant, not a person',
+  verified.includes('domain grant') && verified.includes('@coachsimple.net'));
+assert('the verified block states validity + who issued it',
+  verified.includes('Active') && verified.includes('issued') && verified.includes('by gausley@coachsimple.net'));
+assert('the verified block is styled as verified, not as an unverified claim',
+  verified.includes('class="verified"') && !verified.includes('class="claim"'));
+
+// The provider's own summary lookup needs Postgres, so this offline check drives
+// the page renderer directly — it pins summary → page, not the DB read.
+const activePage = renderInterstitial({
+  clientName: 'Claude', continueUrl: '/oauth/continue', cancelUrl: '/oauth/cancel',
+  authorizeUrl: authorizeUrlFor(REG_ID), origin: 'a local program on this computer (port 51234)',
+  summary: SUMMARY,
+});
+assert('an ACTIVE registration offers Continue', activePage.includes('href="/oauth/continue"'));
+assert('an ACTIVE registration states the tenant it is locked to',
+  activePage.includes('locked to that tenant') && activePage.includes('Coach Simple'));
+
+for (const dead of ['revoked', 'expired'] as const) {
+  const page = renderInterstitial({
+    clientName: 'Claude', continueUrl: '/oauth/continue', cancelUrl: '/oauth/cancel',
+    authorizeUrl: authorizeUrlFor(REG_ID), origin: 'claude.ai',
+    summary: { ...SUMMARY, status: dead, revoked_at: dead === 'revoked' ? '2026-08-19T19:00:00.000Z' : null },
+  });
+  assert(`a ${dead} registration says so and REFUSES Continue`,
+    page.includes(dead.toUpperCase()) && !page.includes('href="/oauth/continue"') && page.includes('btn-disabled'));
+  assert(`a ${dead} registration is not styled as verified`, !page.includes('class="verified"'));
+}
+
+const unregistered = renderInterstitial({
+  clientName: 'Claude', continueUrl: '/oauth/continue', cancelUrl: '/oauth/cancel',
+  authorizeUrl: 'https://connect.lifespace.com/authorize?client_id=x', origin: 'claude.ai',
+});
+assert('a LEGACY unregistered sign-in still offers Continue (nothing breaks today)',
+  unregistered.includes('href="/oauth/continue"'));
+assert('a legacy sign-in shows no verified block', !unregistered.includes('class="verified"'));
+assert('a legacy sign-in carries the red "unregistered connection — nothing verified" notice',
+  unregistered.includes('Unregistered connection') && unregistered.includes('nothing verified')
+  && unregistered.includes('class="danger"'));
+assert('the legacy notice is honest that it still works',
+  unregistered.includes('It still works'));
+
+const unknown = renderInterstitial({
+  clientName: 'Claude', continueUrl: '/oauth/continue', cancelUrl: '/oauth/cancel',
+  authorizeUrl: authorizeUrlFor(REG_ID), origin: 'claude.ai',
+  summary: { ...SUMMARY, status: 'unknown', session_label: null, folder_label: null, tenant: null, seats: [] },
+});
+assert('an id with no registration reads "unregistered connection — nothing verified"',
+  unknown.includes('Unregistered connection') && unknown.includes('nothing verified') && unknown.includes('class="danger"'));
+assert('an unknown registration refuses Continue', !unknown.includes('href="/oauth/continue"'));
+
+assert('only an ACTIVE registration may continue',
+  statusCopy('active').ok && !statusCopy('revoked').ok && !statusCopy('expired').ok && !statusCopy('unknown').ok);
+
+const seatRefusedPage = renderSeatRefused({
+  email: 'greg@personal.example',
+  tenantName: 'Coach Simple',
+  tenantShortId: '01ecd85f',
+  sessionLabel: 'CS - Coach Simple - Platform work',
+  seats: SUMMARY.seats,
+});
+assert('the hard-stop names the account that signed in', seatRefusedPage.includes('greg@personal.example'));
+assert('the hard-stop names the tenant the connection is for',
+  seatRefusedPage.includes('Coach Simple') && seatRefusedPage.includes('01ecd85f'));
+assert('the hard-stop states that NO token was issued',
+  seatRefusedPage.includes('No token was issued') && seatRefusedPage.includes('no seat there'));
+assert('the hard-stop lists the accounts that DO hold a seat',
+  seatRefusedPage.includes('gausley@coachsimple.net'));
+assert('the hard-stop offers no way onward into a different tenant',
+  !seatRefusedPage.includes('/oauth/continue'));
+
+console.log('\n--- verified sign-in block (visible copy) ---');
+console.log(verified.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+console.log('\n--- hard-stop page (visible copy) ---');
+console.log(seatRefusedPage.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
 
 console.log('\n--- interstitial text (visible copy) ---');
 console.log(authorize.html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '')

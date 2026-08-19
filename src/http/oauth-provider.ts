@@ -30,7 +30,15 @@ import {
 } from './memberships.js';
 // ClaudeCode 2026-08-06 10:55 AM PDT — the authorize interstitial ("page before
 // the page") + its cancelled landing.
-import { renderInterstitial, renderCancelled, describeOrigin, clean, LABEL_MAX, HINT_MAX } from './interstitial.js';
+import { renderInterstitial, renderCancelled, renderSeatRefused, describeOrigin, clean, LABEL_MAX, HINT_MAX } from './interstitial.js';
+// ClaudeCode 2026-08-19 12:58 PM PDT — connection registrations: the server-side
+// record that makes the sign-in page verifiable, and the tenant lock that follows
+// from it. See registrations.ts.
+import {
+  getRegistration, statusOf, registrationSummary, registrationIdFromPath,
+  seatsForTenant, touchRegistration, isRegistrationId,
+  type Registration, type RegistrationSummary,
+} from './registrations.js';
 // ClaudeCode 2026-08-06 05:33 PM PDT — in-flight OAuth transactions are now
 // DURABLE (Postgres) instead of process-local Maps. See txn-store.ts for the
 // outage this fixes.
@@ -56,6 +64,12 @@ interface PendingAuthorization {
   state?: string;
   codeChallenge: string;
   resource?: string;
+  // ClaudeCode 2026-08-19 12:58 PM PDT — the registration this sign-in belongs to,
+  // resolved from the /authorize/r/<id> path (or an RFC 8707 `resource` naming
+  // /mcp/r/<id>). NOT a query param the caller typed: the client only knows this
+  // id because it discovered our metadata from the resource URL in .mcp.json.
+  // Absent = legacy unregistered connection, which still works.
+  registrationId?: string;
   expiresAt: number;
 }
 
@@ -86,6 +100,7 @@ interface ConsentPending {
   // tenant id can never widen the choice beyond what was actually offered.
   memberships?: Membership[];
   choiceIds?: string[];
+  registrationId?: string; // ClaudeCode 2026-08-19: carried onto the issued code row
   expiresAt: number;
 }
 // ClaudeCode 2026-08-06 05:34 PM PDT — consent state is durable too. An admin
@@ -198,6 +213,20 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     const q = ((res.req as Request | undefined)?.query ?? {}) as Record<string, unknown>;
     const label = clean(typeof q.label === 'string' ? q.label : undefined, LABEL_MAX);
     const tenantHint = clean(typeof q.tenant_hint === 'string' ? q.tenant_hint : undefined, HINT_MAX);
+    // ClaudeCode 2026-08-19 01:05 PM PDT — WHICH REGISTRATION IS THIS? Two honest
+    // sources, both structural rather than caller-typed:
+    //   1. the path we were reached on — /authorize/r/<id>, which the client only
+    //      knows because it discovered it in the AS metadata for /mcp/r/<id>;
+    //   2. RFC 8707 `resource`, when the client sends one naming /mcp/r/<id>.
+    // A ?registration_id= query param is deliberately NOT accepted: the entire
+    // point is that this id cannot be typed into the URL by the asking tool.
+    const registrationId =
+      registrationIdFromPath((res.req as Request | undefined)?.originalUrl)
+      ?? registrationIdFromPath(params.resource?.href);
+    const summary: RegistrationSummary | undefined = registrationId
+      ? await registrationSummary(registrationId)
+      : undefined;
+
     const txn = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + PENDING_TTL_MS;
     // ClaudeCode 2026-08-06 05:36 PM PDT — persisted, not held in memory: this
@@ -211,6 +240,7 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       state: params.state,
       codeChallenge: params.codeChallenge,
       resource: params.resource?.href,
+      registrationId,
       expiresAt,
     } satisfies PendingAuthorization, expiresAt);
     res.cookie(TXN_COOKIE, txn, {
@@ -233,6 +263,7 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
         origin: describeOrigin(params.redirectUri),
         label,
         tenantHint: await displayHint(tenantHint),
+        summary,
       }),
     );
   }
@@ -246,6 +277,21 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     if (!pend) {
       res.status(400).type('html').send(renderMessage('Sign-in session expired', 'This sign-in window closed before it was used. Start the connection again from the tool that asked.'));
       return;
+    }
+    // ClaudeCode 2026-08-19 01:08 PM PDT — the page already hides Continue for a
+    // revoked/expired registration; this is the server-side half of that gate, so
+    // hand-typing /oauth/continue cannot walk past it. Re-read at click time, not
+    // at render time: a registration revoked WHILE the page sat open is refused.
+    if (pend.registrationId) {
+      const status = statusOf(await getRegistration(pend.registrationId));
+      if (status !== 'active') {
+        await txnStore().drop(txn!);
+        res.status(403).type('html').send(renderMessage(
+          `This connection is ${status}`,
+          `The connection registration for this sign-in is ${status}. No sign-in was started and no token was issued. Ask an administrator for a current connection address.`,
+        ));
+        return;
+      }
     }
     res.redirect(302, ssoStartUrl(trustCallbackUri()));
   }
@@ -336,6 +382,22 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     const memberships = await resolveMemberships(identity.email);
     const tree = await buildChoices(memberships);
 
+    // ClaudeCode 2026-08-19 01:14 PM PDT — REGISTERED CONNECTION → NO PICKER, NO
+    // FALLBACK. When the sign-in arrived through /authorize/r/<id>, the tenant was
+    // decided by an administrator before anyone clicked anything, and the page the
+    // person just read named it. So the picker is skipped entirely and the code is
+    // issued for THAT tenant — or, if the account they signed in with holds no seat
+    // there, nothing is issued at all.
+    //
+    // The silent-fallback branch is the one that has to die: on 08-06 an identity
+    // that lacked a seat on the intended tenant was quietly connected to a
+    // DIFFERENT tenant it did have, and a family session wrote personal notes into
+    // a client tenant. A refusal has to look like a refusal.
+    if (pend.registrationId) {
+      await this.completeRegisteredSignIn(res, pend, identity, memberships, tree);
+      return;
+    }
+
     if (!pickerNeeded(tree)) {
       // Nothing to choose. Keep the single tenant we know about — the membership
       // row if there is one, else the tenant Trust returned.
@@ -403,10 +465,55 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       state: cp.state,
       codeChallenge: cp.codeChallenge,
       resource: cp.resource,
+      registrationId: cp.registrationId,
       expiresAt: Date.now() + AUTH_CODE_TTL_MS,
     };
     await this.issueCodeAndRedirect(res, pend, cp.identity,
       resolveGrantForChoice(memberships, chosenTenant, cp.identity));
+  }
+
+  // ClaudeCode 2026-08-19 01:18 PM PDT — the registered-connection completion:
+  // seat check against the REGISTERED tenant, then issue or hard-stop. `reachable`
+  // is the same list the tenant picker would have offered (own memberships plus
+  // descendants of admin memberships), so "has a seat" means exactly what it means
+  // everywhere else in this flow — no second, looser definition.
+  private async completeRegisteredSignIn(
+    res: Response,
+    pend: PendingAuthorization,
+    identity: TrustIdentity,
+    memberships: Membership[],
+    reachable: TenantNode[],
+  ): Promise<void> {
+    const reg = await getRegistration(pend.registrationId!);
+    const status = statusOf(reg);
+    if (!reg || status !== 'active') {
+      logCallbackFailure('registration_not_active', status);
+      res.status(403).type('html').send(renderMessage(
+        `This connection is ${status}`,
+        `The connection registration for this sign-in is ${status}. No token was issued and nothing was connected.`,
+      ));
+      return;
+    }
+
+    const hasSeat = reachable.some((t) => t.id === reg.tenantId);
+    if (!hasSeat) {
+      logCallbackFailure('no_seat_on_registered_tenant');
+      const [name, seats] = await Promise.all([
+        tenantName(reg.tenantId).catch(() => reg.tenantId.slice(0, 8)),
+        seatsForTenant(reg.tenantId).catch(() => []),
+      ]);
+      res.status(403).type('html').send(renderSeatRefused({
+        email: identity.email,
+        tenantName: name,
+        tenantShortId: reg.tenantId.slice(0, 8),
+        sessionLabel: reg.sessionLabel,
+        seats,
+      }));
+      return;
+    }
+
+    await this.issueCodeAndRedirect(res, pend, identity,
+      resolveGrantForChoice(memberships, reg.tenantId, identity));
   }
 
   // Issue a single-use auth code carrying the verified identity + the CHOSEN
@@ -426,11 +533,12 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     await sql`
       INSERT INTO ls_connect_codes (
         code_hash, client_id, tenant_id, user_id, user_email, role, modules,
-        pkce_challenge, redirect_uri, client_state, resource, expires_at
+        pkce_challenge, redirect_uri, client_state, resource, registration_id, expires_at
       ) VALUES (
         ${sha256(code)}, ${pend.clientId}, ${grant.tenantId || null}, ${identity.email},
         ${identity.email}, ${grant.role}, ${jsonb(grant.modules ?? [])},
         ${pend.codeChallenge}, ${pend.redirectUri}, ${pend.state ?? null}, ${pend.resource ?? null},
+        ${pend.registrationId ?? null},
         ${new Date(Date.now() + AUTH_CODE_TTL_MS)}
       )
     `;
@@ -465,6 +573,12 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     // Single-use: burn it now.
     await sql`UPDATE ls_connect_codes SET used = true WHERE code_hash = ${codeHash}`;
 
+    // ClaudeCode 2026-08-19 01:24 PM PDT — a registration revoked between the
+    // sign-in and this exchange stops here too. The window is seconds wide, but
+    // "revoked means no token" should not depend on timing.
+    const registrationId = (r.registration_id as string | null) ?? undefined;
+    await assertRegistrationActive(registrationId);
+
     // The code row's tenant_id is the tenant the user picked at consent — mint
     // scoped to it (Trust down-scopes if it's a descendant of their home).
     const minted = await mintForChosenTenant(r.user_email as string, r.tenant_id as string);
@@ -474,7 +588,9 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       tenantId: minted.tenant_id || (r.tenant_id as string),
       role: minted.role,
       modules: minted.modules,
+      registrationId,
     });
+    if (registrationId) await touchRegistration(registrationId);
 
     return {
       access_token: minted.token,
@@ -497,6 +613,14 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     if (r.revoked_at) throw new InvalidGrantError('refresh token revoked');
     if (new Date(r.expires_at).getTime() < Date.now()) throw new InvalidGrantError('refresh token expired');
 
+    // ClaudeCode 2026-08-19 01:26 PM PDT — revoking the REGISTRATION now kills the
+    // connection the same way revoking the user does: the refresh is refused, and
+    // the 1h access token is the whole remaining window. Without this, revoking in
+    // Admin would only stop NEW sign-ins and leave a live connector running for 30
+    // days.
+    const registrationId = (r.registration_id as string | null) ?? undefined;
+    await assertRegistrationActive(registrationId);
+
     // Re-mint from Trust — role/modules are re-resolved, so a revoked user hits
     // a 403 here and the session dies (spec acceptance check #5). Re-mint for the
     // SAME chosen tenant stored on the refresh row — never silently re-widen to
@@ -511,7 +635,9 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       tenantId: minted.tenant_id || (r.tenant_id as string),
       role: minted.role,
       modules: minted.modules,
+      registrationId,
     });
+    if (registrationId) await touchRegistration(registrationId);
 
     return {
       access_token: minted.token,
@@ -549,16 +675,17 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
 
   private async issueRefreshToken(
     clientId: string,
-    who: { userId: string; email: string; tenantId: string; role: string; modules: string[] },
+    who: { userId: string; email: string; tenantId: string; role: string; modules: string[]; registrationId?: string },
   ): Promise<string> {
     const raw = REFRESH_PREFIX + crypto.randomBytes(32).toString('hex');
     await sql`
       INSERT INTO ls_connect_tokens (
         token_hash, client_id, tenant_id, user_id, user_email, role, modules,
-        expires_at, last_used_at
+        registration_id, expires_at, last_used_at
       ) VALUES (
         ${sha256(raw)}, ${clientId}, ${who.tenantId || null}, ${who.userId}, ${who.email},
-        ${who.role}, ${jsonb(who.modules)}, ${new Date(Date.now() + REFRESH_TTL_MS)}, now()
+        ${who.role}, ${jsonb(who.modules)}, ${who.registrationId ?? null},
+        ${new Date(Date.now() + REFRESH_TTL_MS)}, now()
       )
     `;
     return raw;
@@ -585,6 +712,16 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
 // Trust's resolveRole is chosen-tenant-aware, that refusal is reported honestly
 // here as an OAuth invalid_grant with the reason on it, instead of surfacing as
 // an opaque 500 from the token endpoint.
+// ClaudeCode 2026-08-19 01:28 PM PDT — one gate, used at both token paths. A
+// legacy (unregistered) connection has no id and is never blocked by it.
+async function assertRegistrationActive(registrationId: string | undefined): Promise<void> {
+  if (!registrationId || !isRegistrationId(registrationId)) return;
+  const status = statusOf(await getRegistration(registrationId));
+  if (status !== 'active') {
+    throw new InvalidGrantError(`This connection registration is ${status}; no token can be issued for it.`);
+  }
+}
+
 async function mintForChosenTenant(email: string, chosenTenant: string) {
   try {
     return await mintAccessToken(email, ACCESS_TTL_SECONDS, chosenTenant);

@@ -28,5 +28,20 @@ h1{font-size:22px;font-weight:600;color:#1a1a1a;margin-bottom:8px}.sub{font-size
 .footnote{font-size:12px;color:#78350f;background:#fffbeb;border-radius:8px;padding:8px 10px;margin-top:18px}
 label{display:flex;align-items:center;gap:8px;font-size:14px;color:#333;margin:4px 0;cursor:pointer}
 .note{font-size:12px;color:#777;margin-top:8px;line-height:1.5}
-.muted{font-size:12px;color:#999;margin-top:16px}</style>
+.muted{font-size:12px;color:#999;margin-top:16px}
+/* ClaudeCode 2026-08-19 12:34 PM PDT — the VERIFIED block. Green + solid + badged,
+   deliberately the visual opposite of the amber dashed .claim block: everything in
+   here comes from a server record (the connection registration, ls_global_tenants,
+   trust_app_roles), never from anything the caller typed. */
+.verified{background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px 16px;margin:0 0 16px;font-size:14px;color:#14532d}
+.verified .tag{display:inline-block;background:#16a34a;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;margin-left:6px;vertical-align:1px}
+.verified .row{color:#14532d}.verified .k{color:#3f6212}
+.verified .note{color:#3f6212}
+.seat{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+.seat .role{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#3f6212;font-size:12px}
+/* Red = this connection is NOT usable, or is not registered at all. */
+.danger{background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:14px 16px;margin:0 0 16px;font-size:14px;color:#7f1d1d}
+.danger .tag{display:inline-block;background:#dc2626;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;margin-left:6px;vertical-align:1px}
+.danger .note{color:#991b1b}
+.btn[disabled],.btn.btn-disabled{background:#e5e7eb;border-color:#e5e7eb;color:#9ca3af;cursor:not-allowed}</style>
 </head><body><div class="card">${body}<p class="muted">Powered by LifeSpace Trust</p></div></body></html>`;
