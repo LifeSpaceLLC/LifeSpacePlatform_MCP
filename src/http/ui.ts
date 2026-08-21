@@ -45,7 +45,8 @@ label{display:flex;align-items:center;gap:8px;font-size:14px;color:#333;margin:4
 .danger .note{color:#991b1b}
 /* ClaudeCode 2026-08-21 — the three-line sign-in page. Body copy is the page. */
 .line{font-size:17px;line-height:1.6;color:#1a1a1a;margin:0 0 14px}
-.copy{color:#2563eb;text-decoration:none}.copy:hover{text-decoration:underline}
+.footer-line{font-size:12px;color:#999;margin:16px 0 0;text-align:center}
+.copy{color:inherit;text-decoration:none}.copy:hover{text-decoration:underline}
 .offscreen{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
 .stop{font-size:15px;line-height:1.5;color:#b91c1c;margin:0 0 14px}
 .btn[disabled],.btn.btn-disabled{background:#e5e7eb;border-color:#e5e7eb;color:#9ca3af;cursor:not-allowed}</style>

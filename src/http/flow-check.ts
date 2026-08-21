@@ -95,8 +95,10 @@ assert('unregistered sign-in carries the single red unregistered line',
   || authorize.html.includes("This connection isn't registered — the tenant is chosen after sign-in."));
 assert('the button reads Continue with Google', authorize.html.includes('href="/oauth/continue"')
   && authorize.html.includes('>Continue with Google</a>'));
-assert('the wrong-browser copy line is the copy action',
-  authorize.html.includes('Wrong browser? Copy this link and open it there.') && authorize.html.includes('id="copybtn"'));
+assert('the wrong-browser escape is a small grey footer BELOW the button, not a third line',
+  authorize.html.includes('Wrong browser? Copy this link and open it there.') && authorize.html.includes('id="copybtn"')
+  && authorize.html.includes('class="footer-line"')
+  && authorize.html.indexOf('Continue with Google') < authorize.html.indexOf('Wrong browser?'));
 assert('interstitial carries the full authorize URL for the copy action',
   authorize.html.includes(`https://connect.lifespace.com${AUTHORIZE_QS.replace(/&/g, '&amp;')}`));
 // Greg, 2026-08-21: everything that is not one of those lines is off the page.
@@ -393,10 +395,10 @@ const activePage = renderInterstitial({
 });
 assert('an ACTIVE registration offers Continue with Google',
   activePage.includes('href="/oauth/continue"') && activePage.includes('>Continue with Google</a>'));
-assert('the registered page is the same three lines',
+assert('the registered page is the same two lines, button, footer',
   activePage.includes('wants to connect to <b>Coach Simple</b>.')
   && activePage.includes('Sign in with <b>gausley@coachsimple.net</b>.')
-  && activePage.includes('Wrong browser? Copy this link and open it there.'));
+  && activePage.indexOf('Continue with Google') < activePage.indexOf('Wrong browser?'));
 assert('the registered page renders NO roster',
   !activePage.includes('*@coachsimple.net') && !activePage.includes('domain grant') && !activePage.includes('Accounts with a seat'));
 // The registration id survives only inside the hidden copy-link value — the

@@ -104,8 +104,8 @@ export const HINT_MAX = 80;
 // So the page is now:
 //     <label> wants to connect to <tenant>.
 //     Sign in with <intended_email>.
-//     Wrong browser? Copy this link and open it there.
 //     [ Continue with Google ]
+//     Wrong browser? Copy this link and open it there.   (small, grey, below)
 //
 // Nothing verified-vs-unverified is rendered any more, because nothing
 // caller-supplied is rendered any more: `label` and `tenant_hint` are dropped
@@ -138,12 +138,14 @@ export function renderInterstitial(o: InterstitialOptions): string {
   return SHELL('LifeSpace Connect', `
     <p class="line">${line1}</p>
     <p class="line">${line2}</p>
-    <p class="line"><a href="#" id="copybtn" class="copy">Wrong browser? Copy this link and open it there.</a></p>
     ${notice}
     ${button}
+    <p class="footer-line"><a href="#" id="copybtn" class="copy">Wrong browser? Copy this link and open it there.</a></p>
     <input id="authurl" class="offscreen" type="text" readonly value="${esc(o.authorizeUrl)}">
     <script>
-      // Copy only — no redirects, no other scripting on this page.
+      // Copy only — no redirects, no other scripting on this page. The link is a
+      // small grey footer BELOW the button (Greg, 2026-08-21): at line size it
+      // read as "you are in the wrong browser" rather than an escape hatch.
       document.getElementById('copybtn').addEventListener('click', function (e) {
         e.preventDefault();
         var box = document.getElementById('authurl');
