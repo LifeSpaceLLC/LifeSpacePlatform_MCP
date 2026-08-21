@@ -122,8 +122,7 @@ export function renderInterstitial(o: InterstitialOptions): string {
   // ClaudeCode 2026-08-21 (Greg: "that is too vague — the name of the desired
   // tenant should be displayed"). An unregistered connection cannot PROVE a
   // tenant, but it can still say who is asking (the DCR client name + where it
-  // runs) and what the asker CLAIMS (`?tenant_hint=`, marked unverified). When
-  // the asker stated nothing, say so plainly instead of a generic sentence.
+  // runs). It must NOT echo what the asker claims (`?tenant_hint=` is untrusted).
   const who = o.clientName ? esc(o.clientName) : 'An app';
   const where = o.origin
     ? (o.origin.startsWith('a local program') ? ' on this computer' : ` (${esc(o.origin)})`)
@@ -134,10 +133,11 @@ export function renderInterstitial(o: InterstitialOptions): string {
   const line2 = summary && summary.status !== 'unknown'
     ? signInLine(summary)
     : 'Sign in with your LifeSpace account.';
+  // The caller-typed `tenant_hint` is deliberately NOT rendered (doctrine, 08-21:
+  // nothing an asker can type appears on this page). A tenant is NAMED only on a
+  // registered connection — that is what registrations are for.
   const notice = !summary || summary.status === 'unknown'
-    ? (o.tenantHint
-        ? `<p class="stop">Tenant the app asked for: <b>${esc(o.tenantHint)}</b> (unverified — this connection isn't registered; confirm the tenant after sign-in).</p>`
-        : '<p class="stop">Tenant not stated by the app — this connection isn\'t registered; you choose the tenant after sign-in.</p>')
+    ? '<p class="stop">This connection isn\'t registered, so it cannot name a tenant — the tenant is chosen after sign-in.</p>'
     : st!.ok
       ? ''
       : `<p class="stop">${esc(st!.blurb)}</p>`;

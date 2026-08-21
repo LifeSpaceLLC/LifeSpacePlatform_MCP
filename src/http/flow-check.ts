@@ -94,7 +94,7 @@ assert('unregistered sign-in states the ask in one line (names the client)',
 assert('unregistered sign-in names the account to use',
   authorize.html.includes('Sign in with your LifeSpace account.'));
 assert('unregistered sign-in carries the single red unregistered line (tenant not stated / claimed)',
-  /Tenant not stated by the app|Tenant the app asked for/.test(authorize.html));
+  /cannot name a tenant — the tenant is chosen after sign-in/.test(authorize.html));
 assert('the button reads Continue with Google', authorize.html.includes('href="/oauth/continue"')
   && authorize.html.includes('>Continue with Google</a>'));
 assert('the wrong-browser escape is a small grey footer BELOW the button, not a third line',
