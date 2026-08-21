@@ -119,14 +119,25 @@ export function renderInterstitial(o: InterstitialOptions): string {
 
   // Line 1 + line 2. A registered connection names its session and its person; a
   // legacy one cannot, and says so in a single red line instead.
+  // ClaudeCode 2026-08-21 (Greg: "that is too vague — the name of the desired
+  // tenant should be displayed"). An unregistered connection cannot PROVE a
+  // tenant, but it can still say who is asking (the DCR client name + where it
+  // runs) and what the asker CLAIMS (`?tenant_hint=`, marked unverified). When
+  // the asker stated nothing, say so plainly instead of a generic sentence.
+  const who = o.clientName ? esc(o.clientName) : 'An app';
+  const where = o.origin
+    ? (o.origin.startsWith('a local program') ? ' on this computer' : ` (${esc(o.origin)})`)
+    : '';
   const line1 = summary && summary.status !== 'unknown'
     ? connectLine(summary)
-    : 'An app wants to connect to LifeSpace.';
+    : `${who}${where} wants to connect to LifeSpace.`;
   const line2 = summary && summary.status !== 'unknown'
     ? signInLine(summary)
     : 'Sign in with your LifeSpace account.';
   const notice = !summary || summary.status === 'unknown'
-    ? '<p class="stop">This connection isn\'t registered — the tenant is chosen after sign-in.</p>'
+    ? (o.tenantHint
+        ? `<p class="stop">Tenant the app asked for: <b>${esc(o.tenantHint)}</b> (unverified — this connection isn't registered; confirm the tenant after sign-in).</p>`
+        : '<p class="stop">Tenant not stated by the app — this connection isn\'t registered; you choose the tenant after sign-in.</p>')
     : st!.ok
       ? ''
       : `<p class="stop">${esc(st!.blurb)}</p>`;

@@ -89,13 +89,12 @@ await provider.authorize(client, params, aRes);
 assert('/authorize renders HTML, does not redirect to Google', !authorize.redirect && authorize.html.includes('<!DOCTYPE html>'));
 // ClaudeCode 2026-08-21 — THREE LINES AND A BUTTON. An unregistered sign-in can
 // name neither the session nor the person, so it says exactly that and no more.
-assert('unregistered sign-in states the ask in one line',
-  authorize.html.includes('An app wants to connect to LifeSpace.'));
+assert('unregistered sign-in states the ask in one line (names the client)',
+  / wants to connect to LifeSpace\./.test(authorize.html));
 assert('unregistered sign-in names the account to use',
   authorize.html.includes('Sign in with your LifeSpace account.'));
-assert('unregistered sign-in carries the single red unregistered line',
-  authorize.html.includes("This connection isn&#039;t registered — the tenant is chosen after sign-in.")
-  || authorize.html.includes("This connection isn't registered — the tenant is chosen after sign-in."));
+assert('unregistered sign-in carries the single red unregistered line (tenant not stated / claimed)',
+  /Tenant not stated by the app|Tenant the app asked for/.test(authorize.html));
 assert('the button reads Continue with Google', authorize.html.includes('href="/oauth/continue"')
   && authorize.html.includes('>Continue with Google</a>'));
 assert('the wrong-browser escape is a small grey footer BELOW the button, not a third line',
@@ -432,8 +431,8 @@ const unregistered = renderInterstitial({
 });
 assert('a LEGACY unregistered sign-in still offers Continue (nothing breaks today)',
   unregistered.includes('href="/oauth/continue"'));
-assert('a legacy sign-in uses the same three-line shape',
-  unregistered.includes('An app wants to connect to LifeSpace.')
+assert('a legacy sign-in uses the same three-line shape (client + origin named)',
+  unregistered.includes('Claude (claude.ai) wants to connect to LifeSpace.')
   && unregistered.includes('Sign in with your LifeSpace account.'));
 assert('a legacy sign-in carries exactly one red unregistered line',
   unregistered.includes('class="stop"') && /the tenant is chosen after sign-in/.test(unregistered)
