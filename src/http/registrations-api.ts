@@ -6,6 +6,8 @@
 //        verified summary next to the link instead of handing over a bare URL.
 //   GET  /connect/v1/registrations              — admin: list this tenant's
 //   POST /connect/v1/registrations              — admin: register a connection
+//        (optional `intended_email` — the ONE account the sign-in page names;
+//         defaults to the caller)
 //   POST /connect/v1/registrations/:id/revoke   — admin: revoke one
 //
 // Auth on the three admin routes is a Trust JWT verified locally with Trust's
@@ -81,6 +83,7 @@ function shape(r: Awaited<ReturnType<typeof listRegistrations>>[number]) {
     session_label: r.sessionLabel,
     folder_label: r.folderLabel,
     created_by_user: r.createdByUser,
+    intended_email: r.intendedEmail,
     created_at: r.createdAt,
     expires_at: r.expiresAt,
     revoked_at: r.revokedAt,
@@ -130,6 +133,12 @@ export function mountRegistrationsApi(app: Express): void {
     const sessionLabel = typeof body.session_label === 'string' ? body.session_label.trim() : '';
     const folderLabel = typeof body.folder_label === 'string' ? body.folder_label.trim() : '';
     const expiresAt = typeof body.expires_at === 'string' && body.expires_at ? new Date(body.expires_at) : null;
+    // ClaudeCode 2026-08-21 — the ONE person this link is for. Optional; defaults
+    // to the admin creating it, which is right for the overwhelmingly common case
+    // (an admin registering their own folder).
+    const intendedEmail = typeof body.intended_email === 'string' && body.intended_email.trim()
+      ? body.intended_email.trim().toLowerCase()
+      : (caller.email || null);
 
     if (!sessionLabel) {
       res.status(400).json({ error: 'session_label is required — it is what the sign-in page will show' });
@@ -150,6 +159,7 @@ export function mountRegistrationsApi(app: Express): void {
         sessionLabel,
         folderLabel: folderLabel || null,
         createdByUser: caller.email || null,
+        intendedEmail,
         expiresAt,
       });
       res.status(201).json(shape(reg));

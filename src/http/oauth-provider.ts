@@ -26,6 +26,8 @@ import { getSubtreeIds, renderConsent, renderMessage, tenantName, type TenantNod
 // exchange happened to return. See memberships.ts for the bug this closes.
 import {
   resolveMemberships, buildChoices, pickerNeeded, resolveGrantForChoice,
+  // ClaudeCode 2026-08-21 — the ONE seat definition, shared with the page.
+  hasSeatOnTenant,
   type Membership, type Grant,
 } from './memberships.js';
 // ClaudeCode 2026-08-06 10:55 AM PDT — the authorize interstitial ("page before
@@ -36,7 +38,7 @@ import { renderInterstitial, renderCancelled, renderSeatRefused, describeOrigin,
 // from it. See registrations.ts.
 import {
   getRegistration, statusOf, registrationSummary, registrationIdFromPath,
-  seatsForTenant, touchRegistration, isRegistrationId,
+  authorizeUrlFor, touchRegistration, isRegistrationId,
   type Registration, type RegistrationSummary,
 } from './registrations.js';
 // ClaudeCode 2026-08-06 05:33 PM PDT — in-flight OAuth transactions are now
@@ -394,7 +396,7 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     // DIFFERENT tenant it did have, and a family session wrote personal notes into
     // a client tenant. A refusal has to look like a refusal.
     if (pend.registrationId) {
-      await this.completeRegisteredSignIn(res, pend, identity, memberships, tree);
+      await this.completeRegisteredSignIn(res, pend, identity, memberships);
       return;
     }
 
@@ -473,16 +475,12 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
   }
 
   // ClaudeCode 2026-08-19 01:18 PM PDT — the registered-connection completion:
-  // seat check against the REGISTERED tenant, then issue or hard-stop. `reachable`
-  // is the same list the tenant picker would have offered (own memberships plus
-  // descendants of admin memberships), so "has a seat" means exactly what it means
-  // everywhere else in this flow — no second, looser definition.
+  // seat check against the REGISTERED tenant, then issue or hard-stop.
   private async completeRegisteredSignIn(
     res: Response,
     pend: PendingAuthorization,
     identity: TrustIdentity,
     memberships: Membership[],
-    reachable: TenantNode[],
   ): Promise<void> {
     const reg = await getRegistration(pend.registrationId!);
     const status = statusOf(reg);
@@ -495,19 +493,35 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       return;
     }
 
-    const hasSeat = reachable.some((t) => t.id === reg.tenantId);
+    // ClaudeCode 2026-08-21 — the seat test is `hasSeatOnTenant`, a port of
+    // Trust's own `seatOnTenant` (device.ts, da184d7) and the SAME predicate the
+    // page's "sign in with" line resolves through. It used to be
+    // `reachable.some(t => t.id === reg.tenantId)`, where `reachable` came from
+    // buildChoices(resolveMemberships(...)): built for a different question,
+    // scoped to the Connect app alone, and subject to the exact-email collapse
+    // that discards every `*@domain` grant. Connect was STRICTER than the door
+    // Trust had already opened — it refused people Trust had just admitted.
+    // A lookup FAILURE is distinguishable from "no seat": it renders an error,
+    // never a refusal.
+    let hasSeat: boolean;
+    try {
+      hasSeat = await hasSeatOnTenant(identity.email, reg.tenantId);
+    } catch (err) {
+      logCallbackFailure('seat_check_failed', err instanceof Error ? err.message : 'unknown');
+      res.status(500).type('html').send(renderMessage(
+        'Could not check this connection',
+        'LifeSpace could not verify access for this connection right now. Nothing was connected. Please try again.',
+      ));
+      return;
+    }
     if (!hasSeat) {
       logCallbackFailure('no_seat_on_registered_tenant');
-      const [name, seats] = await Promise.all([
-        tenantName(reg.tenantId).catch(() => reg.tenantId.slice(0, 8)),
-        seatsForTenant(reg.tenantId).catch(() => []),
-      ]);
+      const name = await tenantName(reg.tenantId).catch(() => reg.tenantId.slice(0, 8));
       res.status(403).type('html').send(renderSeatRefused({
         email: identity.email,
         tenantName: name,
-        tenantShortId: reg.tenantId.slice(0, 8),
-        sessionLabel: reg.sessionLabel,
-        seats,
+        intendedEmail: reg.intendedEmail,
+        retryUrl: authorizeUrlFor(reg.registrationId),
       }));
       return;
     }

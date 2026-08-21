@@ -105,3 +105,22 @@ export function renderConsent(
     </form>
     <a class="btn btn-secondary" href="/oauth/cancel">Cancel</a>`);
 }
+
+// ClaudeCode 2026-08-21 — the ANCESTOR chain of a tenant (parents, grandparents,
+// … up to the root), EXCLUSIVE of the tenant itself. Used by the one seat
+// definition in memberships.ts: an admin row on any tenant above the registered
+// one reaches down into it. Previously the same question was answered by walking
+// DOWN from every membership (getSubtreeTree per membership) — same answer in the
+// happy case, but it forced the seat test to go through buildChoices, which drops
+// `*@domain` rows whenever the identity also holds any exact-email row.
+export async function getAncestorIds(tenantId: string): Promise<Set<string>> {
+  const rows = await sql`
+    WITH RECURSIVE up AS (
+      SELECT id, parent_id FROM ls_global_tenants WHERE id = ${tenantId}::uuid
+      UNION ALL
+      SELECT t.id, t.parent_id FROM ls_global_tenants t INNER JOIN up ON t.id = up.parent_id
+    )
+    SELECT id::text AS id FROM up WHERE id::text <> ${tenantId}
+  `;
+  return new Set(rows.map((r) => r.id as string));
+}
