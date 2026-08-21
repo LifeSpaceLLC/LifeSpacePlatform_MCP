@@ -48,6 +48,10 @@ import { txnStore } from './txn-store.js';
 
 const ACCESS_TTL_SECONDS = 60 * 60; // 1h — bounds a revoked user's window (spec check #5)
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d rolling
+// ClaudeCode 2026-08-21 — how long a rotated-away refresh token stays valid. Must
+// comfortably exceed the access-token life (1 h) so every sibling process gets at
+// least one refresh cycle to adopt the new token; 24 h also covers a laptop lid.
+const ROTATION_OVERLAP_MS = 24 * 60 * 60 * 1000;
 const AUTH_CODE_TTL_MS = 60 * 1000; // 60s single-use auth code
 const PENDING_TTL_MS = 10 * 60 * 1000; // 10min to complete SSO
 const REFRESH_PREFIX = 'lsc_';
@@ -624,7 +628,16 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     const r = rows[0];
     if (!r) throw new InvalidGrantError('unknown refresh token');
     if (r.client_id !== client.client_id) throw new InvalidGrantError('client mismatch');
-    if (r.revoked_at) throw new InvalidGrantError('refresh token revoked');
+    // ClaudeCode 2026-08-21 — ROTATION OVERLAP. A rotated-away refresh token
+    // stays usable until its `revoked_at` (set to now()+ROTATION_OVERLAP_MS on
+    // rotation) instead of dying instantly. Why: Greg runs several Claude Code
+    // windows in ONE folder; they share one mcp-remote token file; with instant
+    // burn the second window to refresh got "revoked" → forced sign-in → which in
+    // turn killed the first window's chain — a sign-in ping-pong all day (5+/day).
+    // An admin/user revoke still sets revoked_at = now() → refused immediately.
+    if (r.revoked_at && new Date(r.revoked_at).getTime() <= Date.now()) {
+      throw new InvalidGrantError('refresh token revoked');
+    }
     if (new Date(r.expires_at).getTime() < Date.now()) throw new InvalidGrantError('refresh token expired');
 
     // ClaudeCode 2026-08-19 01:26 PM PDT — revoking the REGISTRATION now kills the
@@ -641,8 +654,13 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
     // the user's home tenant (order G1 security fix).
     const minted = await mintForChosenTenant(r.user_email as string, r.tenant_id as string);
 
-    // Rotate the refresh token (30d rolling): burn the old, issue a new one.
-    await sql`UPDATE ls_connect_tokens SET revoked_at = now() WHERE token_hash = ${tokenHash}`;
+    // Rotate the refresh token (30d rolling): issue a new one; the old one keeps
+    // working for ROTATION_OVERLAP_MS so sibling processes sharing the same token
+    // file (several windows in one folder) can each pick up the rotation on
+    // their own schedule without being thrown into a fresh sign-in.
+    await sql`UPDATE ls_connect_tokens
+                 SET revoked_at = LEAST(COALESCE(revoked_at, 'infinity'::timestamptz), now() + (${ROTATION_OVERLAP_MS} || ' milliseconds')::interval)
+               WHERE token_hash = ${tokenHash}`;
     const refresh = await this.issueRefreshToken(client.client_id, {
       userId: r.user_id as string,
       email: r.user_email as string,
@@ -684,7 +702,9 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
   ): Promise<void> {
     // Best-effort: only opaque refresh tokens live in our store; access tokens
     // are stateless Trust JWTs bounded by their 1h expiry.
-    await sql`UPDATE ls_connect_tokens SET revoked_at = now() WHERE token_hash = ${sha256(request.token)} AND revoked_at IS NULL`;
+    // ClaudeCode 2026-08-21: an explicit revoke is IMMEDIATE even for a token that
+    // is inside its rotation-overlap window (revoked_at in the future).
+    await sql`UPDATE ls_connect_tokens SET revoked_at = now() WHERE token_hash = ${sha256(request.token)} AND (revoked_at IS NULL OR revoked_at > now())`;
   }
 
   private async issueRefreshToken(
