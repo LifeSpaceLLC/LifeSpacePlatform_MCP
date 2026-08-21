@@ -23,14 +23,17 @@ import { MemoryTxnStore, setTxnStore } from './txn-store.js';
 import {
   buildChoices, pickerNeeded, resolveGrantForChoice, grantsSubtreeReach,
   // ClaudeCode 2026-08-21 — the ONE seat rule, pure and therefore unit-testable.
-  holdsSeat, type SeatRow,
+  holdsSeat, roleFromRows, type SeatRow,
   type Membership,
 } from './memberships.js';
 import { toolsForClaims, canCallTool } from './tools.js';
 
 process.env.CONNECT_BASE_URL ??= 'https://connect.lifespace.com';
 process.env.TRUST_BASE_URL ??= 'https://trust.lifespace.com';
-process.env.CONNECT_TRUST_APP_ID ??= '00000000-0000-0000-0000-000000000000';
+// ClaudeCode 2026-08-21 — the REAL Connect app id, so the role-display precedence
+// checks below exercise the production tiering (Connect > Platform > any other).
+// Nothing here opens a connection; only the id's identity matters.
+process.env.CONNECT_TRUST_APP_ID ??= '5cd7e20e-13c7-4cc7-a517-c407a012716c';
 // db.ts requires the var at import time; nothing here ever opens a connection.
 process.env.DATABASE_URL ??= 'postgres://offline-flow-check/none';
 
@@ -515,6 +518,46 @@ const oldPredicate = (() => {
   return reachable.has(CS);
 })();
 assert('DEFECT 1 — the OLD guard refused that same person (this is the bug)', oldPredicate === false);
+
+// ClaudeCode 2026-08-21 — ONE SEAT LEDGER. Trust settled this twice and Connect
+// tracked neither: 44052d6 (PR #13) made Connect sign-in inherit a LifeSpace
+// PLATFORM app grant, and da184d7 made the gate app-agnostic outright ("a seat is
+// a property of the tenant, not of one app"). Connect must never be stricter than
+// the door Trust already opened.
+const CONNECT_APP = '5cd7e20e-13c7-4cc7-a517-c407a012716c';
+const PLATFORM_APP = 'f0fdabce-2f34-4671-971e-50041f2297c8';
+const WPDESIGNER_APP = '93236c50-fcf2-4fbf-a9fa-13b64d6bcee4';
+
+// Jon holds admin on Coach Simple AND Curriculum Rebuild through the PLATFORM app,
+// and no Connect-app row at all. Before this he was hard-stopped on his own tenant.
+const JON_ROWS: SeatRow[] = [
+  { email: 'jon@coachsimple.net', role: 'admin', tenantId: CS, appId: PLATFORM_APP },
+  { email: 'jon@coachsimple.net', role: 'admin', tenantId: CR, appId: PLATFORM_APP },
+];
+assert('SEAT LEDGER — a Platform-app row with no Connect row IS a seat (Jon)',
+  holdsSeat(JON_ROWS, 'jon@coachsimple.net', CS, CS_ANCESTORS));
+assert('SEAT LEDGER — the page shows Jon\'s role from the Platform row',
+  roleFromRows(JON_ROWS, 'jon@coachsimple.net', CS, CS_ANCESTORS) === 'admin',
+  String(roleFromRows(JON_ROWS, 'jon@coachsimple.net', CS, CS_ANCESTORS)));
+assert('SEAT LEDGER — a grant arriving through ANY other app is still a seat',
+  holdsSeat([{ email: 'gausley@coachsimple.net', role: 'admin', tenantId: CS, appId: WPDESIGNER_APP }],
+    'gausley@coachsimple.net', CS, CS_ANCESTORS));
+// Trust's precedence: an explicit Connect row wins over the Platform row it would
+// otherwise inherit, so a deliberately NARROWER Connect seat is never displayed as
+// the broader Platform one.
+assert('SEAT LEDGER — an explicit Connect row wins over the Platform row',
+  roleFromRows([
+    { email: 'x@coachsimple.net', role: 'user', tenantId: CS, appId: CONNECT_APP },
+    { email: 'x@coachsimple.net', role: 'admin', tenantId: CS, appId: PLATFORM_APP },
+  ], 'x@coachsimple.net', CS, CS_ANCESTORS) === 'user');
+assert('SEAT LEDGER — a DIRECT row beats reaching down from an ancestor',
+  roleFromRows([
+    { email: 'y@coachsimple.net', role: 'user', tenantId: CS, appId: PLATFORM_APP },
+    { email: 'y@coachsimple.net', role: 'super_admin', tenantId: ROOT, appId: PLATFORM_APP },
+  ], 'y@coachsimple.net', CS, CS_ANCESTORS) === 'user');
+assert('SEAT LEDGER — no row on the tenant on ANY app is still no seat',
+  !holdsSeat([{ email: 'z@coachsimple.net', role: 'admin', tenantId: CR, appId: PLATFORM_APP }],
+    'z@coachsimple.net', CS, CS_ANCESTORS));
 
 assert('an admin row on an ANCESTOR reaches down into the registered tenant',
   holdsSeat([{ email: 'gausley@lifespace.com', role: 'super_admin', tenantId: ROOT }],

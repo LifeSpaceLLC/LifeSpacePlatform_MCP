@@ -493,17 +493,16 @@ export class ConnectOAuthProvider implements OAuthServerProvider {
       return;
     }
 
-    // ClaudeCode 2026-08-21 — the seat test is `hasSeatOnTenant`, the SAME
-    // predicate the sign-in page's "sign in with" line is resolved through.
-    // It used to be `reachable.some(t => t.id === reg.tenantId)`, where
-    // `reachable` came from buildChoices(resolveMemberships(...)) — a list built
-    // for a different question ("which tenants may this session choose between?")
-    // and therefore subject to resolveMemberships' exact-email collapse, which
-    // DISCARDS every `*@domain` grant the moment the identity holds any exact
-    // row. A person the page listed as a seat holder was refused by the guard.
-    // A lookup FAILURE is now distinguishable from "no seat": it renders an
-    // error, never a refusal — the old code's `if (!appId) return []` turned a
-    // missing CONNECT_TRUST_APP_ID into a confident accusation.
+    // ClaudeCode 2026-08-21 — the seat test is `hasSeatOnTenant`, a port of
+    // Trust's own `seatOnTenant` (device.ts, da184d7) and the SAME predicate the
+    // page's "sign in with" line resolves through. It used to be
+    // `reachable.some(t => t.id === reg.tenantId)`, where `reachable` came from
+    // buildChoices(resolveMemberships(...)): built for a different question,
+    // scoped to the Connect app alone, and subject to the exact-email collapse
+    // that discards every `*@domain` grant. Connect was STRICTER than the door
+    // Trust had already opened — it refused people Trust had just admitted.
+    // A lookup FAILURE is distinguishable from "no seat": it renders an error,
+    // never a refusal.
     let hasSeat: boolean;
     try {
       hasSeat = await hasSeatOnTenant(identity.email, reg.tenantId);

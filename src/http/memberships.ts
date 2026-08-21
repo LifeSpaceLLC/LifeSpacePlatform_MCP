@@ -153,35 +153,48 @@ export function resolveGrantForChoice(
 
 
 // ---------------------------------------------------------------------------
-// ClaudeCode 2026-08-21 — THE SEAT DEFINITION. One function, one meaning.
+// ClaudeCode 2026-08-21 — THE SEAT DEFINITION.
 //
 // WHY THIS EXISTS (the 2026-08-20 false hard-stop). Connect had THREE different
 // answers to "does this person hold a seat on this tenant?":
 //
-//   1. the sign-in page   → registrations.seatsForTenant(): every trust_app_roles
-//                            row ON that tenant, for CONNECT_TRUST_APP_ID.
+//   1. the sign-in page   → registrations.seatsForTenant(): rows on that tenant,
+//                            for CONNECT_TRUST_APP_ID only.
 //   2. the sign-in guard  → `buildChoices(resolveMemberships(email))` then
-//                            `.some(t => t.id === reg.tenantId)`.
-//   3. Trust's own SSO    → its role resolution, which decides whether the person
-//                            gets an identity back at all.
+//                            `.some(t => t.id === reg.tenantId)` — Connect app only,
+//                            and subject to resolveMemberships' exact-beats-wildcard
+//                            COLLAPSE, which discards every `*@domain` grant the
+//                            moment the identity holds any exact row.
+//   3. Trust             → the door that had already let the person in.
 //
-// (2) is not the same predicate as (1). `dbResolveMemberships` mirrors Trust's
-// resolution ORDER — an exact-email row wins outright and the `*@domain` rows are
-// DISCARDED — which is right for "which row governs your session" and wrong for
-// "do you have a seat here": anyone holding an exact row on tenant A plus a
-// `*@domain` grant on tenant B was listed by the page as a seat on B and REFUSED
-// by the guard. And because both (1) and (2) read `process.env.CONNECT_TRUST_APP_ID`
-// with a silent `if (!appId) return []`, a misconfigured or mid-deploy app id
-// produced a confident "you have no seat" instead of an error.
+// (3) is the authority, and Connect was STRICTER than it. Trust settled this
+// twice, and Connect tracked neither:
 //
-// So the guard now calls THIS, and nothing else. The rule, stated once:
+//   * Trust 44052d6 (PR #13, 2026-08-13) "one seat ledger": onboarding a human in
+//     Admin writes a row on the LifeSpace PLATFORM app, so Connect sign-in
+//     inherits the Platform seat when it has no Connect row of its own.
+//   * Trust da184d7 (2026-08-21) went further, after Greg hit this same refusal on
+//     the device-link page: the gate is `seatOnTenant(email, tenant)` — ANY
+//     trust_app_roles row on that tenant (exact address or matching `*@domain`),
+//     across ANY app, plus admin/super_admin on an ANCESTOR. Greg's own words:
+//     "a seat is a property of the tenant, not of one app; Greg's CS grant arrives
+//     through four different apps."
 //
-//   A person holds a seat on tenant T for LifeSpace Connect when, on the Connect
-//   Trust app, they hold a row on T itself — matched by exact address or by a
-//   `*@domain` grant, at ANY role — or an admin / super_admin row (exact or
-//   domain) on ANY ancestor of T.
+// So the rule below is Trust's `seatOnTenant`, ported. A door that Trust has
+// already opened must not be closed again downstream by a narrower copy of the
+// same question — that drift is what produced this bug, and the 08-13 mint/login
+// split, and the 08-21 device-link refusal. Deliberately NOT the narrower
+// "Connect app OR Platform app" pair: someone whose grant on the tenant arrives
+// through WP-Designer or CS Designer passes Trust's device gate, and would be
+// refused here for no reason anyone could explain.
 //
-// No collapse, no ordering, no silent empty answer.
+//   A person holds a seat on tenant T when they hold a trust_app_roles row on T
+//   itself — matched by exact address or by a `*@domain` grant, at ANY role, on
+//   ANY app — or an admin / super_admin row (exact or domain) on ANY ancestor of T.
+//
+// No app filter, no collapse, no ordering, no silent empty answer. Note that this
+// removes the seat check's dependence on CONNECT_TRUST_APP_ID entirely, and with
+// it the failure mode where a missing env var read as a confident accusation.
 
 /** The Connect Trust app id. Throws rather than returning "nothing" — a missing
  *  app id must never be indistinguishable from "this person has no access". */
@@ -191,11 +204,13 @@ export function connectAppId(): string {
   return appId;
 }
 
-/** One trust_app_roles row, reduced to the three fields the seat rule reads. */
+/** One trust_app_roles row, reduced to the fields the seat rule reads. `appId` is
+ *  carried for ROLE DISPLAY precedence only — the seat test itself ignores it. */
 export interface SeatRow {
   email: string;
   role: string;
   tenantId: string;
+  appId?: string;
 }
 
 /** The seat rule itself — pure, so it can be unit-tested without a database. */
@@ -219,24 +234,23 @@ export function holdsSeat(
   return false;
 }
 
-/** Every Connect-app row this address could match — exact or `*@domain`. */
+/** Every row this address could match, across EVERY app — exact or `*@domain`. */
 export type SeatRowLoader = (email: string) => Promise<SeatRow[]>;
 
 async function dbSeatRows(email: string): Promise<SeatRow[]> {
-  const appId = connectAppId();
   const lower = email.trim().toLowerCase();
   const domain = lower.split('@')[1];
   const rows = await sql`
-    SELECT email, role, tenant_id::text AS tenant_id
+    SELECT email, role, tenant_id::text AS tenant_id, app_id::text AS app_id
       FROM trust_app_roles
-     WHERE app_id = ${appId}::uuid
-       AND lower(email) IN (${lower}, ${domain ? `*@${domain}` : lower})
+     WHERE lower(email) IN (${lower}, ${domain ? `*@${domain}` : lower})
        AND tenant_id IS NOT NULL
   `;
   return rows.map((r) => ({
     email: r.email as string,
     role: (r.role as string) ?? 'user',
     tenantId: r.tenant_id as string,
+    appId: (r.app_id as string) ?? undefined,
   }));
 }
 
@@ -256,24 +270,51 @@ export async function hasSeatOnTenant(email: string, tenantId: string): Promise<
 }
 
 /** The role this address holds on this tenant, by the SAME rule — for the page's
- *  "Sign in with <address>" line. `undefined` = no seat. */
+ *  "Sign in with <address>" line and the summary's `intended_role`.
+ *  `undefined` = no seat.
+ *
+ *  PRECEDENCE mirrors Trust's own (role-resolution.ts): an explicit CONNECT row
+ *  wins outright, then the PLATFORM row Connect inherits from, then any other
+ *  app; within a tier, highest privilege. That is what the person actually
+ *  receives at mint, so it is what the page should name — a deliberately narrower
+ *  Connect seat must not be displayed as the broader Platform one. */
+export function roleFromRows(
+  rows: SeatRow[],
+  email: string,
+  tenantId: string,
+  ancestorIds: Set<string>,
+): string | undefined {
+  const lower = email.trim().toLowerCase();
+  const domain = lower.split('@')[1];
+  const wildcard = domain ? `*@${domain}` : null;
+  const CONNECT = process.env.CONNECT_TRUST_APP_ID ?? '';
+  const PLATFORM = process.env.PLATFORM_TRUST_APP_ID ?? 'f0fdabce-2f34-4671-971e-50041f2297c8';
+  const appTier = (a?: string) => (a && a === CONNECT ? 0 : a === PLATFORM ? 1 : 2);
+  const roleRank = (r: string) => (r === 'super_admin' ? 0 : r === 'admin' ? 1 : 2);
+
+  let best: SeatRow | undefined;
+  for (const r of rows) {
+    const e = (r.email ?? '').trim().toLowerCase();
+    if (e !== lower && (wildcard === null || e !== wildcard)) continue;
+    const on = r.tenantId === tenantId;
+    const above = grantsSubtreeReach(r.role) && ancestorIds.has(r.tenantId);
+    if (!on && !above) continue;
+    // A DIRECT row on the tenant always beats reaching down from an ancestor.
+    if (best) {
+      const bOn = best.tenantId === tenantId;
+      if (bOn !== on) { if (!on) continue; }
+      else if (appTier(best.appId) !== appTier(r.appId)) { if (appTier(r.appId) > appTier(best.appId)) continue; }
+      else if (roleRank(r.role) >= roleRank(best.role)) continue;
+    }
+    best = r;
+  }
+  return best?.role;
+}
+
 export async function roleOnTenant(email: string, tenantId: string): Promise<string | undefined> {
   const [rows, ancestors] = await Promise.all([
     seatRowLoader(email),
     getAncestorIds(tenantId),
   ]);
-  const lower = email.trim().toLowerCase();
-  const domain = lower.split('@')[1];
-  const wildcard = domain ? `*@${domain}` : null;
-  let best: string | undefined;
-  const rank = (r: string) => (r === 'super_admin' ? 0 : r === 'admin' ? 1 : 2);
-  for (const r of rows) {
-    const e = (r.email ?? '').trim().toLowerCase();
-    if (e !== lower && (wildcard === null || e !== wildcard)) continue;
-    const on = r.tenantId === tenantId;
-    const above = grantsSubtreeReach(r.role) && ancestors.has(r.tenantId);
-    if (!on && !above) continue;
-    if (best === undefined || rank(r.role) < rank(best)) best = r.role;
-  }
-  return best;
+  return roleFromRows(rows, email, tenantId, ancestors);
 }

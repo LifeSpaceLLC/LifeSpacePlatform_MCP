@@ -151,20 +151,21 @@ export function statusOf(reg: Registration | undefined): RegistrationStatus {
   return 'active';
 }
 
-/** Who holds a seat on this tenant for the Connect app — read straight from
- *  Trust's `trust_app_roles`, the same table Trust's own roster endpoint reads
- *  and the same one memberships.ts already resolves sign-ins against. Synthetic
- *  agent principals are excluded; `*@domain` wildcard grants are KEPT but marked
- *  as domain grants, because "anyone at this domain" is a real answer to "which
- *  account should I sign in with". */
+/** Who holds a seat on this tenant — read straight from Trust's `trust_app_roles`
+ *  by the SAME rule as memberships.holdsSeat: ANY app, exact address or `*@domain`
+ *  grant. Administrative detail for the JSON summary; no page renders it.
+ *
+ *  ClaudeCode 2026-08-21 — this used to filter on CONNECT_TRUST_APP_ID, which made
+ *  it a THIRD answer to the seat question and, on Coach Simple, a wrong one: the
+ *  Connect app holds one row there while the grants people actually use arrive
+ *  through the Platform app. Synthetic agent principals stay excluded — they never
+ *  sign in through a browser. Deduped by address, highest privilege wins. */
 export async function seatsForTenant(tenantId: string): Promise<Seat[]> {
-  const appId = process.env.CONNECT_TRUST_APP_ID;
-  if (!appId || !UUID_RE.test(tenantId)) return [];
+  if (!UUID_RE.test(tenantId)) return [];
   const rows = await sql`
     SELECT DISTINCT ON (lower(email)) lower(email) AS email, role
       FROM trust_app_roles
-     WHERE app_id = ${appId}::uuid
-       AND tenant_id = ${tenantId}
+     WHERE tenant_id = ${tenantId}
        AND email NOT LIKE '%@agents.internal'
      ORDER BY lower(email),
               CASE role WHEN 'super_admin' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END
