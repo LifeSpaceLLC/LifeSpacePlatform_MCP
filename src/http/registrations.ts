@@ -20,6 +20,9 @@
 // own `trust_app_roles` for who holds a seat. No Trust write path is touched,
 // and no caller-supplied string reaches the verified block.
 import { sql } from './db.js';
+// ClaudeCode 2026-08-21 — the ONE seat definition. The page's "sign in with"
+// line and the sign-in guard now read the same rule; see memberships.ts.
+import { roleOnTenant } from './memberships.js';
 
 export type RegistrationStatus = 'active' | 'revoked' | 'expired' | 'unknown';
 
@@ -29,6 +32,10 @@ export interface Registration {
   sessionLabel: string;
   folderLabel: string | null;
   createdByUser: string | null;
+  /** ClaudeCode 2026-08-21 — the ONE person this connection was registered for.
+   *  Display-only guidance: a seat still decides access. Null on rows that
+   *  predate the column and had no creator to backfill from. */
+  intendedEmail: string | null;
   createdAt: string;
   expiresAt: string | null;
   revokedAt: string | null;
@@ -52,6 +59,10 @@ export interface RegistrationSummary {
   session_label: string | null;
   folder_label: string | null;
   tenant: { id: string; short_id: string; name: string } | null;
+  /** The single account the sign-in page names. Never a roster. */
+  intended_email: string | null;
+  /** That account's role on this tenant, by the seat rule — null if it has none. */
+  intended_role: string | null;
   seats: Seat[];
   created_at: string | null;
   created_by: string | null;
@@ -111,7 +122,7 @@ export async function getRegistration(id: string): Promise<Registration | undefi
   if (!isRegistrationId(id)) return undefined;
   const rows = await sql`
     SELECT registration_id::text AS registration_id, tenant_id::text AS tenant_id,
-           session_label, folder_label, created_by_user,
+           session_label, folder_label, created_by_user, intended_email,
            created_at, expires_at, revoked_at, last_used_at
       FROM ls_connect_registrations
      WHERE registration_id = ${id}::uuid
@@ -124,6 +135,7 @@ export async function getRegistration(id: string): Promise<Registration | undefi
     sessionLabel: (r.session_label as string) ?? '',
     folderLabel: (r.folder_label as string | null) ?? null,
     createdByUser: (r.created_by_user as string | null) ?? null,
+    intendedEmail: (r.intended_email as string | null) ?? null,
     createdAt: iso(r.created_at),
     expiresAt: r.expires_at ? iso(r.expires_at) : null,
     revokedAt: r.revoked_at ? iso(r.revoked_at) : null,
@@ -184,6 +196,14 @@ export async function registrationSummary(id: string): Promise<RegistrationSumma
   // Seats are only meaningful for a registration that exists. Don't leak a
   // roster for an id that was never issued.
   const seats = reg ? await seatsForTenant(reg.tenantId) : [];
+  // ClaudeCode 2026-08-21 — ONE named account, resolved through the same seat
+  // rule the sign-in guard uses. The page used to render `seats` — the whole
+  // tenant roster — which answered a question nobody asked ("who else could sign
+  // in?") instead of the one that matters ("which account is THIS link for?").
+  const intendedEmail = reg?.intendedEmail ?? null;
+  const intendedRole = reg && intendedEmail
+    ? (await roleOnTenant(intendedEmail, reg.tenantId).catch(() => undefined)) ?? null
+    : null;
   return {
     registration_id: id,
     status,
@@ -192,6 +212,8 @@ export async function registrationSummary(id: string): Promise<RegistrationSumma
     tenant: reg
       ? { id: reg.tenantId, short_id: reg.tenantId.slice(0, 8), name: tenant?.name ?? '(unknown tenant)' }
       : null,
+    intended_email: intendedEmail,
+    intended_role: intendedRole,
     seats,
     created_at: reg?.createdAt ?? null,
     created_by: reg?.createdByUser ?? null,
@@ -211,16 +233,20 @@ export interface CreateRegistrationInput {
   sessionLabel: string;
   folderLabel?: string | null;
   createdByUser?: string | null;
+  /** Defaults to the creator — a registration always names ONE intended person. */
+  intendedEmail?: string | null;
   expiresAt?: Date | null;
 }
 
 export async function createRegistration(input: CreateRegistrationInput): Promise<Registration> {
   const rows = await sql`
-    INSERT INTO ls_connect_registrations (tenant_id, session_label, folder_label, created_by_user, expires_at)
+    INSERT INTO ls_connect_registrations (tenant_id, session_label, folder_label, created_by_user, intended_email, expires_at)
     VALUES (${input.tenantId}::uuid, ${input.sessionLabel}, ${input.folderLabel ?? null},
-            ${input.createdByUser ?? null}, ${input.expiresAt ?? null})
+            ${input.createdByUser ?? null},
+            ${(input.intendedEmail ?? input.createdByUser ?? null)},
+            ${input.expiresAt ?? null})
     RETURNING registration_id::text AS registration_id, tenant_id::text AS tenant_id,
-              session_label, folder_label, created_by_user,
+              session_label, folder_label, created_by_user, intended_email,
               created_at, expires_at, revoked_at, last_used_at
   `;
   const r = rows[0];
@@ -230,6 +256,7 @@ export async function createRegistration(input: CreateRegistrationInput): Promis
     sessionLabel: r.session_label as string,
     folderLabel: (r.folder_label as string | null) ?? null,
     createdByUser: (r.created_by_user as string | null) ?? null,
+    intendedEmail: (r.intended_email as string | null) ?? null,
     createdAt: iso(r.created_at),
     expiresAt: r.expires_at ? iso(r.expires_at) : null,
     revokedAt: null,
@@ -253,7 +280,7 @@ export async function listRegistrations(tenantIds: string[]): Promise<Registrati
   if (tenantIds.length === 0) return [];
   const rows = await sql`
     SELECT registration_id::text AS registration_id, tenant_id::text AS tenant_id,
-           session_label, folder_label, created_by_user,
+           session_label, folder_label, created_by_user, intended_email,
            created_at, expires_at, revoked_at, last_used_at
       FROM ls_connect_registrations
      WHERE tenant_id::text = ANY(${tenantIds})
@@ -265,6 +292,7 @@ export async function listRegistrations(tenantIds: string[]): Promise<Registrati
     sessionLabel: (r.session_label as string) ?? '',
     folderLabel: (r.folder_label as string | null) ?? null,
     createdByUser: (r.created_by_user as string | null) ?? null,
+    intendedEmail: (r.intended_email as string | null) ?? null,
     createdAt: iso(r.created_at),
     expiresAt: r.expires_at ? iso(r.expires_at) : null,
     revokedAt: r.revoked_at ? iso(r.revoked_at) : null,

@@ -122,6 +122,17 @@ export const DDL: string[] = [
   // mechanism #6). NULL = a legacy unregistered connection, which still works.
   `ALTER TABLE ls_connect_codes  ADD COLUMN IF NOT EXISTS registration_id uuid`,
   `ALTER TABLE ls_connect_tokens ADD COLUMN IF NOT EXISTS registration_id uuid`,
+
+  // ClaudeCode 2026-08-21 — INTENDED_EMAIL. A registration names ONE person: the
+  // human whose browser profile this link is meant for. Before this the sign-in
+  // page had nothing person-shaped to show, so it rendered the tenant's whole
+  // roster under "Sign in as" — six addresses, five of them irrelevant, and no
+  // answer to the only question being asked. Display-only guidance: a SEAT still
+  // decides access (see memberships.hasSeatOnTenant). Backfilled from the creator,
+  // who is the intended person in every registration created so far.
+  `ALTER TABLE ls_connect_registrations ADD COLUMN IF NOT EXISTS intended_email text`,
+  `UPDATE ls_connect_registrations SET intended_email = created_by_user
+      WHERE intended_email IS NULL AND created_by_user IS NOT NULL`,
 ];
 
 export async function applySchema(): Promise<void> {

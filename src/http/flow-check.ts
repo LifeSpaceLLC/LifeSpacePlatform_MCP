@@ -10,7 +10,7 @@ import { ConnectOAuthProvider } from './oauth-provider.js';
 import {
   describeOrigin, clean, LABEL_MAX,
   // ClaudeCode 2026-08-19 02:06 PM PDT — the verified sign-in block + its gates.
-  renderInterstitial, renderVerifiedBlock, renderSeatRefused, statusCopy,
+  renderInterstitial, renderSeatRefused, statusCopy, signInLine, connectLine,
 } from './interstitial.js';
 import { registrationIdFromPath, isRegistrationId, resourceUrl, authorizeUrlFor, issuerFor, type RegistrationSummary } from './registrations.js';
 import { renderConsent } from './tenants.js';
@@ -22,6 +22,8 @@ import { MemoryTxnStore, setTxnStore } from './txn-store.js';
 // stubbed, so the union/gate/grant rules under test are the shipped ones.
 import {
   buildChoices, pickerNeeded, resolveGrantForChoice, grantsSubtreeReach,
+  // ClaudeCode 2026-08-21 — the ONE seat rule, pure and therefore unit-testable.
+  holdsSeat, type SeatRow,
   type Membership,
 } from './memberships.js';
 import { toolsForClaims, canCallTool } from './tools.js';
@@ -82,13 +84,25 @@ const { res: aRes, out: authorize } = stubRes(authorizeReq);
 await provider.authorize(client, params, aRes);
 
 assert('/authorize renders HTML, does not redirect to Google', !authorize.redirect && authorize.html.includes('<!DOCTYPE html>'));
-assert('interstitial states the product + the ask',
-  authorize.html.includes('LifeSpace Connect') && authorize.html.includes('A tool connection is asking to sign in.'));
-assert('interstitial names the requesting client', authorize.html.includes('<b>Claude</b>'));
-assert('interstitial offers Continue + Cancel',
-  authorize.html.includes('href="/oauth/continue"') && authorize.html.includes('href="/oauth/cancel"'));
-assert('interstitial carries the full authorize URL for the copy button',
+// ClaudeCode 2026-08-21 — THREE LINES AND A BUTTON. An unregistered sign-in can
+// name neither the session nor the person, so it says exactly that and no more.
+assert('unregistered sign-in states the ask in one line',
+  authorize.html.includes('An app wants to connect to LifeSpace.'));
+assert('unregistered sign-in names the account to use',
+  authorize.html.includes('Sign in with your LifeSpace account.'));
+assert('unregistered sign-in carries the single red unregistered line',
+  authorize.html.includes("This connection isn&#039;t registered — the tenant is chosen after sign-in.")
+  || authorize.html.includes("This connection isn't registered — the tenant is chosen after sign-in."));
+assert('the button reads Continue with Google', authorize.html.includes('href="/oauth/continue"')
+  && authorize.html.includes('>Continue with Google</a>'));
+assert('the wrong-browser copy line is the copy action',
+  authorize.html.includes('Wrong browser? Copy this link and open it there.') && authorize.html.includes('id="copybtn"'));
+assert('interstitial carries the full authorize URL for the copy action',
   authorize.html.includes(`https://connect.lifespace.com${AUTHORIZE_QS.replace(/&/g, '&amp;')}`));
+// Greg, 2026-08-21: everything that is not one of those lines is off the page.
+for (const gone of ['Requested by', 'Requesting tool', 'What it gets', 'Next step', 'unverified', 'Cancel', 'Details']) {
+  assert(`sign-in page does not render "${gone}"`, !authorize.html.includes(gone));
+}
 assert('no auto-redirect (no meta refresh / location assignment)',
   !/http-equiv=["']refresh/i.test(authorize.html) && !/location\s*(\.href)?\s*=/.test(authorize.html));
 assert('connect_txn cookie set', authorize.cookies.some((c) => c.startsWith('connect_txn=')));
@@ -146,7 +160,8 @@ assert('origin: loopback redirect_uri reads as a local program',
 assert('origin: claude.ai callback reads as claude.ai', describeOrigin('https://claude.ai/api/mcp/auth_callback') === 'claude.ai');
 assert('origin: anything else shows the host plainly', describeOrigin('https://weird.example.com/cb') === 'weird.example.com');
 assert('origin: garbage redirect_uri degrades safely', describeOrigin('not-a-url') === 'an unrecognized destination');
-assert('interstitial renders the derived origin line', authorize.html.includes('Requested by: <b>claude.ai</b>'));
+assert('the origin line is derived correctly but is no longer rendered on the page',
+  describeOrigin('https://claude.ai/api/mcp/auth_callback') === 'claude.ai' && !authorize.html.includes('Requested by'));
 
 // Untrusted label / hint: present, escaped, capped, and never described as verified.
 const evilLabel = '<img src=x onerror=alert(1)>Coach Simple folder';
@@ -157,17 +172,16 @@ const hintReq: Partial<Request> = {
 };
 const { res: hRes, out: hinted } = stubRes(hintReq);
 await provider.authorize(client, { ...(params as object) } as never, hRes);
-assert('label is rendered as TEXT, never markup', hinted.html.includes('&lt;img src=x onerror=alert(1)&gt;') && !hinted.html.includes('<img src=x'));
-assert('label + tenant hint shown as the caller\'s own claim',
-  hinted.html.includes('This request says it is from:') && hinted.html.includes('Expects tenant: <b>Coach Simple</b>'));
-assert('hint is not presented as verified', hinted.html.includes('LifeSpace cannot verify it'));
-// Spoofing guard: the caller's claim must SAY "unverified" and be styled apart
-// from the server-verified facts (registered client name + derived origin).
-assert('claim block carries the visible word "unverified"', /This request says it is from:[\s\S]{0,300}unverified/i.test(hinted.html));
-assert('claim block is styled distinctly from verified facts',
-  hinted.html.includes('class="claim"') && hinted.html.includes('class="tag">unverified'));
-assert('verified facts stay in their own blocks', hinted.html.includes('class="who">Requested by') && hinted.html.includes('Requesting tool'));
-assert('footer states the unverified convention', hinted.html.includes("Anything this page can't verify is marked unverified."));
+// ClaudeCode 2026-08-21 — caller-supplied `label` / `tenant_hint` no longer reach
+// the sign-in page AT ALL. They used to be rendered in an amber "unverified"
+// block; on a three-line page there is nowhere for an untrusted claim to live, so
+// the safest possible treatment is the one now in force — don't render it. (They
+// still preselect a radio in the tenant picker, which is checked below.)
+assert('a caller-supplied label never reaches the sign-in page',
+  !hinted.html.includes('Coach Simple folder') && !hinted.html.includes('img src=x') && !hinted.html.includes('&lt;img'));
+assert('a caller-supplied tenant hint never reaches the sign-in page',
+  !hinted.html.includes('Expects tenant') && !hinted.html.includes('This request says it is from'));
+assert('the word "unverified" appears nowhere on the sign-in page', !/unverified/i.test(hinted.html));
 assert('over-long label is capped', (clean('x'.repeat(500), LABEL_MAX) ?? '').length === LABEL_MAX + 1);
 
 // tenant_hint preselects the matching radio in the picker — still a confirmation.
@@ -345,6 +359,8 @@ const SUMMARY: RegistrationSummary = {
   session_label: 'CS - Coach Simple - Platform work',
   folder_label: '~/_git/CoachSimple',
   tenant: { id: '01ecd85f-0000-0000-0000-000000000000', short_id: '01ecd85f', name: 'Coach Simple' },
+  intended_email: 'gausley@coachsimple.net',
+  intended_role: 'admin',
   seats: [
     { email: 'gausley@coachsimple.net', role: 'admin', kind: 'account' },
     { email: '*@coachsimple.net', role: 'user', kind: 'domain' },
@@ -358,30 +374,41 @@ const SUMMARY: RegistrationSummary = {
   sign_in_url: authorizeUrlFor(REG_ID),
 };
 
-const verified = renderVerifiedBlock(SUMMARY);
-assert('the verified block names the session', verified.includes('CS - Coach Simple - Platform work'));
-assert('the verified block names the folder', verified.includes('~/_git/CoachSimple'));
-assert('the verified block names the tenant + short id',
-  verified.includes('Coach Simple') && verified.includes('01ecd85f'));
-assert('the verified block names the seat holder to sign in as',
-  verified.includes('gausley@coachsimple.net'));
-assert('a domain grant is shown as a domain grant, not a person',
-  verified.includes('domain grant') && verified.includes('@coachsimple.net'));
-assert('the verified block states validity + who issued it',
-  verified.includes('Active') && verified.includes('issued') && verified.includes('by gausley@coachsimple.net'));
-assert('the verified block is styled as verified, not as an unverified claim',
-  verified.includes('class="verified"') && !verified.includes('class="claim"'));
+// ClaudeCode 2026-08-21 — DEFECT 2: the page rendered `seats`, i.e. the tenant's
+// whole roster, under "Sign in as" — six addresses on a real client tenant. A
+// registration names ONE person; the page names that person and nobody else.
+assert('line 1 names the session and the tenant',
+  connectLine(SUMMARY) === '<b>CS - Coach Simple - Platform work</b> wants to connect to <b>Coach Simple</b>.',
+  connectLine(SUMMARY));
+assert('line 2 names the ONE intended account',
+  signInLine(SUMMARY) === 'Sign in with <b>gausley@coachsimple.net</b>.', signInLine(SUMMARY));
+assert('with no intended account, line 2 falls back to the seat sentence — never a roster',
+  signInLine({ ...SUMMARY, intended_email: null }) === 'Sign in with an account that has a seat on <b>Coach Simple</b>.',
+  signInLine({ ...SUMMARY, intended_email: null }));
 
-// The provider's own summary lookup needs Postgres, so this offline check drives
-// the page renderer directly — it pins summary → page, not the DB read.
 const activePage = renderInterstitial({
   clientName: 'Claude', continueUrl: '/oauth/continue', cancelUrl: '/oauth/cancel',
   authorizeUrl: authorizeUrlFor(REG_ID), origin: 'a local program on this computer (port 51234)',
   summary: SUMMARY,
 });
-assert('an ACTIVE registration offers Continue', activePage.includes('href="/oauth/continue"'));
-assert('an ACTIVE registration states the tenant it is locked to',
-  activePage.includes('locked to that tenant') && activePage.includes('Coach Simple'));
+assert('an ACTIVE registration offers Continue with Google',
+  activePage.includes('href="/oauth/continue"') && activePage.includes('>Continue with Google</a>'));
+assert('the registered page is the same three lines',
+  activePage.includes('wants to connect to <b>Coach Simple</b>.')
+  && activePage.includes('Sign in with <b>gausley@coachsimple.net</b>.')
+  && activePage.includes('Wrong browser? Copy this link and open it there.'));
+assert('the registered page renders NO roster',
+  !activePage.includes('*@coachsimple.net') && !activePage.includes('domain grant') && !activePage.includes('Accounts with a seat'));
+// The registration id survives only inside the hidden copy-link value — the
+// person never READS it. Assert against the visible text, not the markup.
+const activeVisible = activePage.replace(/<script[\s\S]*?<\/script>/g, '')
+  .replace(/<style[\s\S]*?<\/style>/g, '').replace(/<input[^>]*>/g, '')
+  .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+assert('the registered page shows no validity, id, issuer or origin detail',
+  !activeVisible.includes(REG_ID.slice(0, 8)) && !activeVisible.includes('Active')
+  && !activeVisible.includes('issued') && !activeVisible.includes('Requested by')
+  && !activeVisible.includes('01ecd85f'), activeVisible);
+assert('the word "unverified" appears nowhere on a registered sign-in page', !/unverified/i.test(activePage));
 
 for (const dead of ['revoked', 'expired'] as const) {
   const page = renderInterstitial({
@@ -389,9 +416,9 @@ for (const dead of ['revoked', 'expired'] as const) {
     authorizeUrl: authorizeUrlFor(REG_ID), origin: 'claude.ai',
     summary: { ...SUMMARY, status: dead, revoked_at: dead === 'revoked' ? '2026-08-19T19:00:00.000Z' : null },
   });
-  assert(`a ${dead} registration says so and REFUSES Continue`,
-    page.includes(dead.toUpperCase()) && !page.includes('href="/oauth/continue"') && page.includes('btn-disabled'));
-  assert(`a ${dead} registration is not styled as verified`, !page.includes('class="verified"'));
+  assert(`a ${dead} registration says so in one line and REFUSES Continue`,
+    page.includes(dead === 'revoked' ? 'This connection was revoked.' : 'This connection has expired.')
+    && !page.includes('href="/oauth/continue"') && page.includes('btn-disabled'));
 }
 
 const unregistered = renderInterstitial({
@@ -400,20 +427,19 @@ const unregistered = renderInterstitial({
 });
 assert('a LEGACY unregistered sign-in still offers Continue (nothing breaks today)',
   unregistered.includes('href="/oauth/continue"'));
-assert('a legacy sign-in shows no verified block', !unregistered.includes('class="verified"'));
-assert('a legacy sign-in carries the red "unregistered connection — nothing verified" notice',
-  unregistered.includes('Unregistered connection') && unregistered.includes('nothing verified')
-  && unregistered.includes('class="danger"'));
-assert('the legacy notice is honest that it still works',
-  unregistered.includes('It still works'));
+assert('a legacy sign-in uses the same three-line shape',
+  unregistered.includes('An app wants to connect to LifeSpace.')
+  && unregistered.includes('Sign in with your LifeSpace account.'));
+assert('a legacy sign-in carries exactly one red unregistered line',
+  unregistered.includes('class="stop"') && /the tenant is chosen after sign-in/.test(unregistered)
+  && (unregistered.match(/class="stop"/g) ?? []).length === 1);
 
 const unknown = renderInterstitial({
   clientName: 'Claude', continueUrl: '/oauth/continue', cancelUrl: '/oauth/cancel',
   authorizeUrl: authorizeUrlFor(REG_ID), origin: 'claude.ai',
-  summary: { ...SUMMARY, status: 'unknown', session_label: null, folder_label: null, tenant: null, seats: [] },
+  summary: { ...SUMMARY, status: 'unknown', session_label: null, folder_label: null, tenant: null, seats: [], intended_email: null, intended_role: null },
 });
-assert('an id with no registration reads "unregistered connection — nothing verified"',
-  unknown.includes('Unregistered connection') && unknown.includes('nothing verified') && unknown.includes('class="danger"'));
+assert('an id with no registration reads as unregistered', /the tenant is chosen after sign-in/.test(unknown));
 assert('an unknown registration refuses Continue', !unknown.includes('href="/oauth/continue"'));
 
 assert('only an ACTIVE registration may continue',
@@ -422,22 +448,94 @@ assert('only an ACTIVE registration may continue',
 const seatRefusedPage = renderSeatRefused({
   email: 'greg@personal.example',
   tenantName: 'Coach Simple',
-  tenantShortId: '01ecd85f',
-  sessionLabel: 'CS - Coach Simple - Platform work',
-  seats: SUMMARY.seats,
+  intendedEmail: 'gausley@coachsimple.net',
+  retryUrl: authorizeUrlFor(REG_ID),
 });
-assert('the hard-stop names the account that signed in', seatRefusedPage.includes('greg@personal.example'));
-assert('the hard-stop names the tenant the connection is for',
-  seatRefusedPage.includes('Coach Simple') && seatRefusedPage.includes('01ecd85f'));
-assert('the hard-stop states that NO token was issued',
-  seatRefusedPage.includes('No token was issued') && seatRefusedPage.includes('no seat there'));
-assert('the hard-stop lists the accounts that DO hold a seat',
-  seatRefusedPage.includes('gausley@coachsimple.net'));
-assert('the hard-stop offers no way onward into a different tenant',
-  !seatRefusedPage.includes('/oauth/continue'));
+assert('the hard-stop leads with "That\'s not the right account."',
+  seatRefusedPage.includes('That&#039;s not the right account.') || seatRefusedPage.includes("That's not the right account."));
+assert('the hard-stop names the ONE account to use',
+  seatRefusedPage.includes('Sign in with <b>gausley@coachsimple.net</b>.'));
+assert('the hard-stop lists no roster',
+  !seatRefusedPage.includes('*@coachsimple.net') && !seatRefusedPage.includes('Accounts with a seat'));
+assert('the hard-stop offers Try again and nothing else',
+  seatRefusedPage.includes('>Try again</a>') && !seatRefusedPage.includes('/oauth/continue'));
+assert('with no intended account the hard-stop still names no roster',
+  renderSeatRefused({ email: 'x@y.z', tenantName: 'Coach Simple', intendedEmail: null })
+    .includes('an account that has a seat on <b>Coach Simple</b>'));
 
-console.log('\n--- verified sign-in block (visible copy) ---');
-console.log(verified.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+// ---------------------------------------------------------------------------
+// ClaudeCode 2026-08-21 — DEFECT 1 REGRESSION: the FALSE HARD-STOP.
+//
+// Greg opened the registration for tenant Coach Simple, signed in as
+// gausley@coachsimple.net — who holds an ADMIN row on Coach Simple for the
+// Connect app — and was told he had no seat there. The guard was asking
+// `buildChoices(resolveMemberships(email)).some(t => t.id === reg.tenantId)`,
+// which is not the seat question: `resolveMemberships` mirrors Trust's
+// resolution ORDER, so the moment an identity holds ANY exact-email row, every
+// `*@domain` grant it also holds is discarded. The sign-in page, meanwhile, read
+// trust_app_roles directly. Two predicates, two answers, one accusation.
+//
+// `holdsSeat` is now the only predicate, and these cases pin it.
+const CS = '01ecd85f-0e6d-471b-98a8-e06b02207874';        // Coach Simple
+const ROOT = '542330f7-4c0b-4237-b932-2af8c9c32514';      // LifeSpace Platform (its parent)
+const CR = '4162bcb9-8109-4f85-9e1e-0c425c17992c';        // Curriculum Rebuild (its child)
+const CS_ANCESTORS = new Set([ROOT]);
+
+// Greg's actual rows on the Connect app, as they stand in production.
+const GREG_ROWS: SeatRow[] = [{ email: 'gausley@coachsimple.net', role: 'admin', tenantId: CS }];
+assert('DEFECT 1 — an admin row ON the registered tenant IS a seat',
+  holdsSeat(GREG_ROWS, 'gausley@coachsimple.net', CS, CS_ANCESTORS));
+
+// The shape that made the old guard lie: an exact row somewhere else PLUS a
+// domain grant on the registered tenant. resolveMemberships drops the domain row
+// because an exact row exists, so buildChoices never offered Coach Simple —
+// while the page listed `*@coachsimple.net` as a seat holder on it.
+const MIXED: SeatRow[] = [
+  { email: 'gausley@coachsimple.net', role: 'admin', tenantId: CR },
+  { email: '*@coachsimple.net', role: 'user', tenantId: CS },
+];
+assert('DEFECT 1 — a domain grant is a seat even when an exact row exists elsewhere',
+  holdsSeat(MIXED, 'gausley@coachsimple.net', CS, CS_ANCESTORS));
+// The old predicate, reconstructed offline (the real one calls getSubtreeTree,
+// which needs Postgres). Step 1 is resolveMemberships' collapse: an exact-email
+// row exists, so the `*@coachsimple.net` row is DISCARDED. Step 2 is buildChoices:
+// the surviving admin row reaches its own tenant plus DESCENDANTS — and Coach
+// Simple is the PARENT of Curriculum Rebuild, not a descendant. Refusal.
+const descendantsOf: Record<string, string[]> = { [ROOT]: [CS, CR], [CS]: [CR], [CR]: [] };
+const oldPredicate = (() => {
+  const exact = MIXED.filter((r) => r.email === 'gausley@coachsimple.net');
+  const chosen = exact.length > 0 ? exact : MIXED;             // the collapse
+  const reachable = new Set<string>();
+  for (const r of chosen) {
+    reachable.add(r.tenantId);
+    if (grantsSubtreeReach(r.role)) for (const d of descendantsOf[r.tenantId] ?? []) reachable.add(d);
+  }
+  return reachable.has(CS);
+})();
+assert('DEFECT 1 — the OLD guard refused that same person (this is the bug)', oldPredicate === false);
+
+assert('an admin row on an ANCESTOR reaches down into the registered tenant',
+  holdsSeat([{ email: 'gausley@lifespace.com', role: 'super_admin', tenantId: ROOT }],
+    'gausley@lifespace.com', CS, CS_ANCESTORS));
+assert('a plain user row on an ancestor does NOT reach down',
+  !holdsSeat([{ email: 'someone@lifespace.com', role: 'user', tenantId: ROOT }],
+    'someone@lifespace.com', CS, CS_ANCESTORS));
+assert('a row on a DESCENDANT is not a seat on the registered tenant',
+  !holdsSeat([{ email: 'jon@coachsimple.net', role: 'admin', tenantId: CR }],
+    'jon@coachsimple.net', CS, CS_ANCESTORS));
+assert('a different person\'s row is never a seat',
+  !holdsSeat(GREG_ROWS, 'someone.else@coachsimple.net', CS, CS_ANCESTORS));
+assert('a domain grant only matches its own domain',
+  !holdsSeat([{ email: '*@coachsimple.net', role: 'admin', tenantId: CS }],
+    'greg@personal.example', CS, CS_ANCESTORS));
+assert('address matching is case- and whitespace-insensitive',
+  holdsSeat([{ email: '  GAusley@CoachSimple.net ', role: 'admin', tenantId: CS }],
+    'gausley@coachsimple.net', CS, CS_ANCESTORS));
+
+console.log('\n--- registered sign-in page (visible copy) ---');
+console.log(activePage.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '')
+  .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+
 console.log('\n--- hard-stop page (visible copy) ---');
 console.log(seatRefusedPage.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
 
