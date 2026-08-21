@@ -85,7 +85,7 @@ export const tools: ToolDef[] = [
         },
         site_type: {
           type: 'string',
-          enum: ['wordpress', 'html', 'other', 'coach_simple'],
+          enum: ['wordpress', 'html', 'other', 'coach_simple', 'video'],
           description: "Which adapter drives this site. Coach Simple brands use 'coach_simple'.",
         },
         config: {
@@ -117,7 +117,7 @@ export const tools: ToolDef[] = [
         new_slug: { type: 'string', description: 'Rename the slug. Must stay unique in the tenant.' },
         display_name: { type: 'string' },
         site_url: { type: 'string' },
-        site_type: { type: 'string', enum: ['wordpress', 'html', 'other', 'coach_simple'] },
+        site_type: { type: 'string', enum: ['wordpress', 'html', 'other', 'coach_simple', 'video'] },
         environment: { type: 'string', enum: ['local', 'staging', 'prod'] },
         config: {
           type: 'object',
@@ -140,6 +140,19 @@ export const tools: ToolDef[] = [
     description:
       "List the Site projects for the caller's tenant. A project groups related sites (e.g. all the brands of one business) and its id is REQUIRED by lsp_site_create — call this first so you never guess a project_id. Each row carries slug, display_name and site_count.",
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'lsp_site_project_create',
+    description:
+      "Create a Site PROJECT (a named group of sites) on the caller's tenant — needed before lsp_site_create when lsp_site_projects returns []. -- ClaudeCode 2026-08-21 (video review tool). slug must be unique within the tenant (duplicate = 409).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'URL-safe identifier, unique within the tenant, e.g. "course-review".' },
+        display_name: { type: 'string', description: 'Human label, e.g. "Course Review".' },
+      },
+      required: ['slug', 'display_name'],
+    },
   },
   {
     name: 'lsp_site_comments_list',
@@ -258,6 +271,7 @@ export const handlers: Record<string, ToolHandler> = {
   },
 
   lsp_site_projects: async () => okText(await call('site', '/v1/projects', 'GET')),
+  lsp_site_project_create: async (args) => okText(await call('site', '/v1/projects', 'POST', args)),
 
   lsp_site_comments_list: async (args) => {
     const { slug, path } = (args ?? {}) as { slug: string; path?: string };
