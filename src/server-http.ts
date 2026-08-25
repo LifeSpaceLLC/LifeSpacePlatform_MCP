@@ -42,11 +42,16 @@ import {
 } from './http/tools.js';
 import { requestContext } from './request-context.js';
 import { errText } from './client.js';
-import { renderStartPage, normalizeApp } from './http/start-page.js';
+import {
+  renderStartPage,
+  normalizeApp,
+  renderRegistrationStartPage,
+  renderRegistrationGonePage,
+} from './http/start-page.js';
 import { tenantName } from './http/tenants.js';
 // ClaudeCode 2026-08-19 01:44 PM PDT — per-registration resource URLs + their
 // management API. See http/registrations.ts for why the id lives in the URL.
-import { isRegistrationId, issuerFor, resourceUrl } from './http/registrations.js';
+import { isRegistrationId, issuerFor, resourceUrl, registrationSummary } from './http/registrations.js';
 import { mountRegistrationsApi } from './http/registrations-api.js';
 
 const CONNECT_BASE_URL = process.env.CONNECT_BASE_URL ?? 'https://connect.lifespace.com';
@@ -66,6 +71,35 @@ app.get('/health', (_req, res) => {
 // ?app=cowork|claude-desktop|claude-code|codex preselects a tab.
 app.get('/start', (req, res) => {
   res.type('html').send(renderStartPage(normalizeApp(req.query.app)));
+});
+
+// ClaudeCode 2026-08-25 — PER-REGISTRATION start page. Same page as the Claude
+// Code tab of /start, except the command already carries the registration id and
+// the header states, from the REGISTRATION ROW, who the connection is for and
+// which tenant it reaches. Public + tenant-safe: it renders only what
+// `registrationSummary` already serves publicly (labels, tenant name, the one
+// intended address) — no seat roster, no secret. An id we can't vouch for gets a
+// plain 404/410 page and never a working command.
+app.get('/start/r/:regId', async (req, res) => {
+  const id = String(req.params.regId ?? '');
+  if (!isRegistrationId(id)) {
+    res.status(404).type('html').send(renderRegistrationGonePage('unknown'));
+    return;
+  }
+  try {
+    const summary = await registrationSummary(id.toLowerCase());
+    if (summary.status !== 'active') {
+      const status = summary.status === 'unknown' ? 'unknown' : summary.status;
+      res
+        .status(status === 'unknown' ? 404 : 410)
+        .type('html')
+        .send(renderRegistrationGonePage(status));
+      return;
+    }
+    res.type('html').send(renderRegistrationStartPage(summary));
+  } catch {
+    res.status(404).type('html').send(renderRegistrationGonePage('unknown'));
+  }
 });
 
 // ClaudeCode 2026-08-19 01:48 PM PDT — PER-REGISTRATION RESOURCE URLS.

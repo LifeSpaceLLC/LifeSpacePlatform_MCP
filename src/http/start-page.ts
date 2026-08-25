@@ -121,19 +121,12 @@ const FOR_THE_AI = `<div class="ai">
 </ul>
 </div>`;
 
-export function renderStartPage(preselect: StartApp): string {
-  const tabs = APPS.map(
-    (a) =>
-      `<button class="tab${a === preselect ? ' active' : ''}" data-app="${a}" role="tab" aria-selected="${a === preselect}">${TAB_CONTENT[a].label}</button>`,
-  ).join('');
-  const panels = APPS.map(
-    (a) =>
-      `<section class="panel${a === preselect ? ' active' : ''}" data-panel="${a}"><p class="intro">${TAB_CONTENT[a].intro}</p>${TAB_CONTENT[a].steps}</section>`,
-  ).join('');
-
+// ClaudeCode 2026-08-25 — one SHELL for every start page (generic /start and the
+// per-registration /start/r/<id>), so they cannot drift apart visually.
+function SHELL(title: string, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connect your AI to LifeSpace</title>
+<title>${title}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;color:#1a1a1a;min-height:100vh;padding:24px 16px}
@@ -161,14 +154,13 @@ code{background:#f1f5f9;border-radius:4px;padding:1px 5px;font-size:13px}
 .aititle{font-weight:600;font-size:14px;color:#334155;margin-bottom:8px}
 .ai ul{margin:0;padding-left:18px}
 .ai li{font-size:13px;color:#334155;line-height:1.55;margin-bottom:6px}
+.reg{margin-bottom:20px;padding:14px 16px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px}
+.regtitle{font-weight:600;font-size:14px;color:#166534;margin-bottom:6px}
+.regline{font-size:14px;color:#14532d;line-height:1.55}
+.regmeta{font-size:12px;color:#3f6b4c;margin-top:6px}
+.bad{margin-bottom:20px;padding:14px 16px;background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;font-size:14px;color:#7f1d1d;line-height:1.55}
 </style></head><body><div class="wrap"><div class="card">
-<h1>Connect your AI to LifeSpace</h1>
-<p class="sub">Pick the app you use. You’ll add LifeSpace as a connector, sign in with your work Google account, and your team’s tools appear — nothing to install, no keys to manage.</p>
-<div class="tabs" role="tablist">${tabs}</div>
-${panels}
-${FOR_THE_AI}
-<p class="help">Stuck? Reply to the invite email that brought you here — a teammate will get you connected.</p>
-<p class="muted">Powered by LifeSpace Trust · nothing on this page is secret</p>
+${body}
 </div></div>
 <script>
 document.querySelectorAll('.tab').forEach(function(t){t.addEventListener('click',function(){
@@ -185,4 +177,127 @@ document.querySelectorAll('.copybtn').forEach(function(b){b.addEventListener('cl
   }).finally(function(){b.textContent='Copied ✓';b.classList.add('copied');setTimeout(function(){b.textContent='Copy';b.classList.remove('copied')},1600)});
 })});
 </script></body></html>`;
+}
+
+export function renderStartPage(preselect: StartApp): string {
+  const tabs = APPS.map(
+    (a) =>
+      `<button class="tab${a === preselect ? ' active' : ''}" data-app="${a}" role="tab" aria-selected="${a === preselect}">${TAB_CONTENT[a].label}</button>`,
+  ).join('');
+  const panels = APPS.map(
+    (a) =>
+      `<section class="panel${a === preselect ? ' active' : ''}" data-panel="${a}"><p class="intro">${TAB_CONTENT[a].intro}</p>${TAB_CONTENT[a].steps}</section>`,
+  ).join('');
+
+  return SHELL(
+    'Connect your AI to LifeSpace',
+    `<h1>Connect your AI to LifeSpace</h1>
+<p class="sub">Pick the app you use. You’ll add LifeSpace as a connector, sign in with your work Google account, and your team’s tools appear — nothing to install, no keys to manage.</p>
+<div class="tabs" role="tablist">${tabs}</div>
+${panels}
+${FOR_THE_AI}
+<p class="help">Stuck? Reply to the invite email that brought you here — a teammate will get you connected.</p>
+<p class="muted">Powered by LifeSpace Trust · nothing on this page is secret</p>`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ClaudeCode 2026-08-25 — PER-REGISTRATION START PAGE (GET /start/r/<id>).
+//
+// The generic /start above is a menu: pick your app, then ask an admin to
+// register a connection. This page is the finished article — one registration,
+// one command, already carrying the registration id, with the header stating
+// WHO the connection is for and WHICH tenant, read from the registration row
+// (server records only — same trust rule as the interstitial; nothing here is
+// caller-typed). An unknown / revoked / expired id never renders a command.
+
+function esc(s: string): string {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** The exact command that goes in the invite email's page — native http
+ *  transport, no mcp-remote, registration id baked into the address. */
+export function registeredClaudeCodeCommand(resourceUrlForReg: string): string {
+  return `claude mcp add --transport http --scope project lsp ${resourceUrlForReg}`;
+}
+
+/** Minimal shape this page needs — matches `RegistrationSummary` structurally so
+ *  the route can hand the summary straight in without a second read. */
+export interface StartRegistrationView {
+  registration_id: string;
+  status: string;
+  session_label: string | null;
+  folder_label: string | null;
+  tenant: { name: string } | null;
+  intended_email: string | null;
+  resource_url: string;
+}
+
+export function renderRegistrationStartPage(v: StartRegistrationView): string {
+  const cmd = registeredClaudeCodeCommand(v.resource_url);
+  const who = v.intended_email ? esc(v.intended_email) : 'the person this was registered for';
+  const tenant = v.tenant?.name ? esc(v.tenant.name) : 'its tenant';
+  const folder = v.folder_label ? ` · folder <b>${esc(v.folder_label)}</b>` : '';
+
+  const verified = `<div class="reg">
+<div class="regtitle">Registered connection</div>
+<div class="regline">This connection is registered for <b>${who}</b> · <b>${tenant}</b></div>
+<div class="regmeta">Session: ${esc(v.session_label ?? '(unnamed)')}${folder} · registration ${esc(v.registration_id)}</div>
+</div>`;
+
+  const steps = [
+    step(
+      1,
+      'Add the connector to your project',
+      `Open a terminal in your project folder and run:${copyBlock('rc-cmd', cmd, 'Copy the command')}This writes a project-scoped <code>.mcp.json</code> — the connection belongs to this folder only, and the address already carries this registration.`,
+    ),
+    step(
+      2,
+      'Authenticate',
+      `Start <code>claude</code>, type ${copyBlock('rc-mcp', '/mcp', 'Copy /mcp')} choose <b>lsp</b>, then <b>Authenticate</b>. ${GOOGLE_STEP} Sign in as <b>${who}</b> — this connection is locked to <b>${tenant}</b>, so any other account is refused rather than quietly connected somewhere else.`,
+    ),
+    step(
+      3,
+      'No team picker',
+      'A registered connection never asks <i>“Connect to which tenant?”</i> — the tenant was decided when the connection was registered.',
+    ),
+    step(
+      4,
+      'Done',
+      'Your LifeSpace tools appear in Claude Code. Try asking: <i>“list my projects”</i>.',
+    ),
+  ].join('');
+
+  return SHELL(
+    'Connect Claude Code to LifeSpace',
+    `<h1>Connect Claude Code to LifeSpace</h1>
+<p class="sub">One command, one browser sign-in. Nothing to install, no keys to manage.</p>
+${verified}
+${steps}
+${FOR_THE_AI}
+<p class="help">Stuck? Reply to the invite email that brought you here — a teammate will get you connected.</p>
+<p class="muted">Powered by LifeSpace Trust · nothing on this page is secret</p>`,
+  );
+}
+
+/** No command, ever, for an id we cannot vouch for. 404 for unknown, 410 for a
+ *  registration that existed and no longer works. */
+export function renderRegistrationGonePage(status: 'unknown' | 'revoked' | 'expired'): string {
+  const msg =
+    status === 'revoked'
+      ? 'This connection has been <b>revoked</b> by an administrator. It can no longer be used to connect.'
+      : status === 'expired'
+        ? 'This connection has <b>expired</b>. It can no longer be used to connect.'
+        : 'We don’t recognise this connection link. It may have been mistyped, or it was never issued.';
+  return SHELL(
+    'Connection not available',
+    `<h1>Connection not available</h1>
+<div class="bad">${msg}</div>
+<p class="help">Ask the teammate who sent you here for a current link (Admin → Tenants → Connections). Nothing is set up on your machine by visiting this page.</p>
+<p class="muted">Powered by LifeSpace Trust · nothing on this page is secret</p>`,
+  );
 }
