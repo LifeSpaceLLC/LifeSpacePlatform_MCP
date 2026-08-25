@@ -249,33 +249,33 @@ export function renderRegistrationStartPage(v: StartRegistrationView): string {
 <div class="regmeta">Session: ${esc(v.session_label ?? '(unnamed)')}${folder} · registration ${esc(v.registration_id)}</div>
 </div>`;
 
+  // ClaudeCode 2026-08-25 (Greg) — written for an experienced daily Claude Code
+  // user: no install step, no tooling tour. Three moves and done. The CLAUDE.md
+  // step is an ADDED IMPORT LINE — never a replacement; the guide file itself
+  // arrives separately from the tenant side.
   const steps = [
     step(
       1,
-      'Add the connector to your project',
-      `Open a terminal in your project folder and run:${copyBlock('rc-cmd', cmd, 'Copy the command')}This writes a project-scoped <code>.mcp.json</code> — the connection belongs to this folder only, and the address already carries this registration.`,
+      'Add the connector',
+      `In your <b>VAI project folder</b>, run:${copyBlock('rc-cmd', cmd, 'Copy the command')}Project-scoped <code>.mcp.json</code>; the address already carries this registration.`,
     ),
     step(
       2,
       'Authenticate',
-      `Start <code>claude</code>, type ${copyBlock('rc-mcp', '/mcp', 'Copy /mcp')} choose <b>lsp</b>, then <b>Authenticate</b>. ${GOOGLE_STEP} Sign in as <b>${who}</b> — this connection is locked to <b>${tenant}</b>, so any other account is refused rather than quietly connected somewhere else.`,
+      `Run <code>claude</code>, then ${copyBlock('rc-mcp', '/mcp', 'Copy /mcp')} → <b>lsp</b> → <b>Authenticate</b> → sign in with Google as <b>${who}</b>. No tenant picker — this connection is locked to <b>${tenant}</b>, and any other account is refused.`,
     ),
     step(
       3,
-      'No team picker',
-      'A registered connection never asks <i>“Connect to which tenant?”</i> — the tenant was decided when the connection was registered.',
+      'Add one line to your CLAUDE.md',
+      `Append this single import line to your existing <code>CLAUDE.md</code> — add it, don’t replace anything:${copyBlock('rc-guide', '@vai-lsp-guide.md', 'Copy the import line')}The <code>vai-lsp-guide.md</code> file comes to you separately; drop it in the same folder.`,
     ),
-    step(
-      4,
-      'Done',
-      'Your LifeSpace tools appear in Claude Code. Try asking: <i>“list my projects”</i>.',
-    ),
+    step(4, 'Done', 'Ask <i>“list my projects”</i> to confirm.'),
   ].join('');
 
   return SHELL(
     'Connect Claude Code to LifeSpace',
     `<h1>Connect Claude Code to LifeSpace</h1>
-<p class="sub">One command, one browser sign-in. Nothing to install, no keys to manage.</p>
+<p class="sub">One command, one browser sign-in, one line in your CLAUDE.md.</p>
 ${verified}
 ${steps}
 ${FOR_THE_AI}
