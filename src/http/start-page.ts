@@ -159,7 +159,6 @@ code{background:#f1f5f9;border-radius:4px;padding:1px 5px;font-size:13px}
 .regline{font-size:14px;color:#14532d;line-height:1.55}
 .regmeta{font-size:12px;color:#3f6b4c;margin-top:6px}
 .oneline{font-size:16px;font-weight:600;color:#1a1a1a;margin-bottom:4px;line-height:1.45}
-.afterline{font-size:14px;color:#1a1a1a;margin-top:10px;line-height:1.5}
 .worksline{font-size:13px;color:#666;margin-top:10px}
 .termfall{margin-top:14px}
 .termfall summary{font-size:13px;color:#2563eb;cursor:pointer}
@@ -282,12 +281,41 @@ export function renderRegistrationStartPage(v: StartRegistrationView): string {
   // pasted instructions. So everything that survives a restart — the connector
   // entry, the guide file, the CLAUDE.md import line — is written to disk FIRST,
   // and authentication is deferred to the fresh session, where it actually works.
-  const paste =
-    `Set up my VAI workspace: ` +
-    `1) run ${cmd} ` +
-    `2) save ${v.guide_url} into this folder as vai-lsp-guide.md ` +
-    `and add the line @vai-lsp-guide.md to my CLAUDE.md (create CLAUDE.md if missing) ` +
-    `3) then tell me to: quit and reopen Claude Code completely, and after restarting run /mcp → Authenticate → Google.`;
+  //
+  // ClaudeCode 2026-08-25 (Greg) — step 1 writes the config FILE, it does not run
+  // `claude mcp add`. A VS Code extension user may have no CLI on PATH, and
+  // "command not found" strands exactly the person this page exists for. The
+  // JSON below is byte-identical to what `claude mcp add --transport http
+  // --scope project` writes (verified against the dry run), so the two paths
+  // produce the same project config — the CLI command stays available under
+  // "Prefer the terminal?" for people who do have it.
+  const mcpJson = JSON.stringify({
+    mcpServers: { lsp: { type: 'http', url: v.resource_url } },
+  });
+  //
+  // ClaudeCode 2026-08-25 (Greg, final wording) — the block ENDS by dictating the
+  // exact words the assistant hands back, because the restart wipes the chat: the
+  // instructions for the part a human must do have to be on screen BEFORE the
+  // quit, in the assistant's own last message. Cmd+Q covers VS Code and the
+  // desktop app alike.
+  const paste = [
+    'Set up my VAI workspace connection. Follow these steps exactly:',
+    '',
+    '1. In this folder, create a file named .mcp.json (if it already exists, merge into it) with this content:',
+    mcpJson,
+    '',
+    `2. Download ${v.guide_url} and save it in this folder as vai-lsp-guide.md`,
+    '',
+    "3. Add this line to my CLAUDE.md in this folder (create the file if it doesn't exist):",
+    '@vai-lsp-guide.md',
+    '',
+    '4. When steps 1-3 are done, give me EXACTLY these instructions and stop:',
+    '"Setup complete. Now do this:',
+    ' a) Quit VS Code or Claude Code completely (Cmd+Q) and reopen this same folder.',
+    ' b) In a new Claude Code chat, type /mcp and press Enter, pick lsp, choose Authenticate, and sign in with your Google account in the browser that opens.',
+    ' c) Come back to the chat and paste: Run lsp_trust_whoami and show me my clients.',
+    "If you see your client teams listed, you're connected.\"",
+  ].join('\n');
 
   // The address in a form an AI reading the rendered page cannot miss.
   const aiPointer = `<!-- FOR THE AI READING THIS PAGE: the VAI operating guide is raw markdown at ${guideUrl} — save it in this folder as vai-lsp-guide.md and APPEND the line "@vai-lsp-guide.md" to CLAUDE.md (append only; never replace that file). -->`;
@@ -296,9 +324,8 @@ export function renderRegistrationStartPage(v: StartRegistrationView): string {
     'Connect Claude Code to LifeSpace',
     `<h1>Connect Claude Code to LifeSpace</h1>
 ${verified}
-<p class="oneline">Copy this and paste it into Claude Code (the desktop app) — that’s the whole setup.</p>
+<p class="oneline">Copy this block and paste it into Claude Code — that’s the whole setup.</p>
 ${copyBlock('rc-paste', paste, 'Copy the setup message')}
-<p class="afterline">After your Claude finishes, restart Claude Code and approve the new connector when it asks, then type /mcp and click Authenticate — when you’re signed in, ask: show me my clients.</p>
 <p class="worksline">Works the same in VS Code, the terminal, or wherever you run Claude Code.</p>
 <details class="termfall"><summary>Prefer the terminal?</summary>${copyBlock('rc-cmd', cmd, 'Copy the command')}</details>
 ${aiPointer}
