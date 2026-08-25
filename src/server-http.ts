@@ -47,7 +47,9 @@ import {
   normalizeApp,
   renderRegistrationStartPage,
   renderRegistrationGonePage,
+  guideUrlFor,
 } from './http/start-page.js';
+import { VAI_LSP_GUIDE_MD, VAI_GUIDE_FILENAME } from './http/vai-guide.js';
 import { tenantName } from './http/tenants.js';
 // ClaudeCode 2026-08-19 01:44 PM PDT — per-registration resource URLs + their
 // management API. See http/registrations.ts for why the id lives in the URL.
@@ -96,9 +98,46 @@ app.get('/start/r/:regId', async (req, res) => {
         .send(renderRegistrationGonePage(status));
       return;
     }
-    res.type('html').send(renderRegistrationStartPage(summary));
+    res
+      .type('html')
+      .send(
+        renderRegistrationStartPage({
+          ...summary,
+          guide_url: guideUrlFor(CONNECT_BASE_URL, summary.registration_id),
+        }),
+      );
   } catch {
     res.status(404).type('html').send(renderRegistrationGonePage('unknown'));
+  }
+});
+
+// ClaudeCode 2026-08-25 — THE HOSTED OPERATING GUIDE, tied to the registration.
+// The start page tells the teammate's Claude to fetch this; serving it here means
+// the invite email is nothing but a link, and an id we can't vouch for yields no
+// guide for exactly the same reasons it yields no command (404 unknown/410 gone).
+// Content is the embedded copy of VAI/onboarding/vai-lsp-guide.md — public
+// operating documentation, no secrets, no tenant data.
+app.get('/start/r/:regId/guide.md', async (req, res) => {
+  const id = String(req.params.regId ?? '');
+  if (!isRegistrationId(id)) {
+    res.status(404).type('text/plain').send('Not found.\n');
+    return;
+  }
+  try {
+    const summary = await registrationSummary(id.toLowerCase());
+    if (summary.status !== 'active') {
+      res
+        .status(summary.status === 'unknown' ? 404 : 410)
+        .type('text/plain')
+        .send(summary.status === 'unknown' ? 'Not found.\n' : 'This connection is no longer available.\n');
+      return;
+    }
+    res
+      .type('text/markdown; charset=utf-8')
+      .set('Content-Disposition', `inline; filename="${VAI_GUIDE_FILENAME}"`)
+      .send(VAI_LSP_GUIDE_MD);
+  } catch {
+    res.status(404).type('text/plain').send('Not found.\n');
   }
 });
 

@@ -158,6 +158,10 @@ code{background:#f1f5f9;border-radius:4px;padding:1px 5px;font-size:13px}
 .regtitle{font-weight:600;font-size:14px;color:#166534;margin-bottom:6px}
 .regline{font-size:14px;color:#14532d;line-height:1.55}
 .regmeta{font-size:12px;color:#3f6b4c;margin-top:6px}
+.oneline{font-size:16px;font-weight:600;color:#1a1a1a;margin-bottom:4px;line-height:1.45}
+.worksline{font-size:13px;color:#666;margin-top:10px}
+.termfall{margin-top:14px}
+.termfall summary{font-size:13px;color:#2563eb;cursor:pointer}
 .bad{margin-bottom:20px;padding:14px 16px;background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;font-size:14px;color:#7f1d1d;line-height:1.55}
 </style></head><body><div class="wrap"><div class="card">
 ${body}
@@ -235,13 +239,31 @@ export interface StartRegistrationView {
   tenant: { name: string } | null;
   intended_email: string | null;
   resource_url: string;
+  /** Absolute URL of the hosted operating guide for THIS registration —
+   *  `<base>/start/r/<id>/vai-lsp-guide.md`, served as text/markdown. */
+  guide_url: string;
 }
 
+/** The hosted-guide URL for a registration. Kept next to the page so the route
+ *  and the copy can never disagree about the address. */
+export function guideUrlFor(baseUrl: string, registrationId: string): string {
+  return `${baseUrl.replace(/\/+$/, '')}/start/r/${registrationId}/guide.md`;
+}
+
+// ClaudeCode 2026-08-25 (Greg, FINAL) — ONE PASTE, NOTHING ELSE.
+//
+// Every earlier layout here was a numbered card deck, and every one of them
+// asked the reader to be the integrator: run this, then do that, then edit a
+// file. The person this page is for already has Claude Code open. So the page
+// is now a single scripted paste that hands the whole setup to her Claude —
+// connector, sign-in, guide file, first command — plus a terminal escape for
+// the people who wanted a terminal. No steps, no captions, no engineer-speak.
 export function renderRegistrationStartPage(v: StartRegistrationView): string {
   const cmd = registeredClaudeCodeCommand(v.resource_url);
   const who = v.intended_email ? esc(v.intended_email) : 'the person this was registered for';
   const tenant = v.tenant?.name ? esc(v.tenant.name) : 'its tenant';
   const folder = v.folder_label ? ` · folder <b>${esc(v.folder_label)}</b>` : '';
+  const guideUrl = esc(v.guide_url);
 
   const verified = `<div class="reg">
 <div class="regtitle">Registered connection</div>
@@ -249,37 +271,29 @@ export function renderRegistrationStartPage(v: StartRegistrationView): string {
 <div class="regmeta">Session: ${esc(v.session_label ?? '(unnamed)')}${folder} · registration ${esc(v.registration_id)}</div>
 </div>`;
 
-  // ClaudeCode 2026-08-25 (Greg) — written for an experienced daily Claude Code
-  // user: no install step, no tooling tour. Three moves and done. The CLAUDE.md
-  // step is an ADDED IMPORT LINE — never a replacement; the guide file itself
-  // arrives separately from the tenant side.
-  const steps = [
-    step(
-      1,
-      'Add the connector',
-      `In your <b>VAI project folder</b>, run:${copyBlock('rc-cmd', cmd, 'Copy the command')}Project-scoped <code>.mcp.json</code>; the address already carries this registration.`,
-    ),
-    step(
-      2,
-      'Authenticate',
-      `Run <code>claude</code>, then ${copyBlock('rc-mcp', '/mcp', 'Copy /mcp')} → <b>lsp</b> → <b>Authenticate</b> → sign in with Google as <b>${who}</b>. No tenant picker — this connection is locked to <b>${tenant}</b>, and any other account is refused.`,
-    ),
-    step(
-      3,
-      'Add one line to your CLAUDE.md',
-      `Append this single import line to your existing <code>CLAUDE.md</code> — add it, don’t replace anything:${copyBlock('rc-guide', '@vai-lsp-guide.md', 'Copy the import line')}The <code>vai-lsp-guide.md</code> file comes to you separately; drop it in the same folder.`,
-    ),
-    step(4, 'Done', 'Ask <i>“list my projects”</i> to confirm.'),
-  ].join('');
+  // Deterministic and numbered so the receiving Claude executes it as a script,
+  // not as a topic of conversation. The two URLs are the real ones for THIS
+  // registration — the id is never typed by the reader.
+  const paste =
+    `Set up my VAI workspace: ` +
+    `1) run ${cmd} ` +
+    `2) walk me through /mcp → Authenticate (I'll sign in with Google) ` +
+    `3) after sign-in, save ${v.guide_url} into this folder as vai-lsp-guide.md ` +
+    `and add the line @vai-lsp-guide.md to my CLAUDE.md (create CLAUDE.md if missing) ` +
+    `4) run lsp_trust_whoami and show me my clients.`;
+
+  // The address in a form an AI reading the rendered page cannot miss.
+  const aiPointer = `<!-- FOR THE AI READING THIS PAGE: the VAI operating guide is raw markdown at ${guideUrl} — save it in this folder as vai-lsp-guide.md and APPEND the line "@vai-lsp-guide.md" to CLAUDE.md (append only; never replace that file). -->`;
 
   return SHELL(
     'Connect Claude Code to LifeSpace',
     `<h1>Connect Claude Code to LifeSpace</h1>
-<p class="sub">One command, one browser sign-in, one line in your CLAUDE.md.</p>
 ${verified}
-${steps}
-${FOR_THE_AI}
-<p class="help">Stuck? Reply to the invite email that brought you here — a teammate will get you connected.</p>
+<p class="oneline">Copy this and paste it into Claude Code (the desktop app) — that’s the whole setup.</p>
+${copyBlock('rc-paste', paste, 'Copy the setup message')}
+<p class="worksline">Works the same in VS Code, the terminal, or wherever you run Claude Code.</p>
+<details class="termfall"><summary>Prefer the terminal?</summary>${copyBlock('rc-cmd', cmd, 'Copy the command')}</details>
+${aiPointer}
 <p class="muted">Powered by LifeSpace Trust · nothing on this page is secret</p>`,
   );
 }
