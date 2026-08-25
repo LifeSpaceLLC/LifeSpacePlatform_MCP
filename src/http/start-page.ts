@@ -298,7 +298,7 @@ export function renderRegistrationStartPage(v: StartRegistrationView): string {
 ${verified}
 <p class="oneline">Copy this and paste it into Claude Code (the desktop app) — that’s the whole setup.</p>
 ${copyBlock('rc-paste', paste, 'Copy the setup message')}
-<p class="afterline">After your Claude finishes, restart Claude Code, then type /mcp and click Authenticate — when you’re signed in, ask: show me my clients.</p>
+<p class="afterline">After your Claude finishes, restart Claude Code and approve the new connector when it asks, then type /mcp and click Authenticate — when you’re signed in, ask: show me my clients.</p>
 <p class="worksline">Works the same in VS Code, the terminal, or wherever you run Claude Code.</p>
 <details class="termfall"><summary>Prefer the terminal?</summary>${copyBlock('rc-cmd', cmd, 'Copy the command')}</details>
 ${aiPointer}
