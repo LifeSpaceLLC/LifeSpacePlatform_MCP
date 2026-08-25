@@ -6,6 +6,12 @@
 // Tenant-safe: static HTML, zero secrets, zero tenant data. ?app= preselects
 // a tab (cowork | claude-desktop | claude-code | codex).
 
+// ClaudeCode 2026-08-25 — the guide TEXT is embedded in the paste block (see
+// renderRegistrationStartPage step 2). STALENESS: editing
+// VAI/onboarding/vai-lsp-guide.md in the platform repo does NOT change this page —
+// re-embed it into src/http/vai-guide.ts and REDEPLOY Connect.
+import { VAI_LSP_GUIDE_MD } from './vai-guide.js';
+
 const MCP_URL = 'https://connect.lifespace.com/mcp';
 const CLAUDE_CODE_CMD = `claude mcp add --transport http --scope project lsp ${MCP_URL}`;
 const CODEX_TOML = `[mcp_servers.lsp]
@@ -304,9 +310,10 @@ export function renderRegistrationStartPage(v: StartRegistrationView): string {
     '1. In this folder, create a file named .mcp.json (if it already exists, merge into it) with this content:',
     mcpJson,
     '',
-    `2. Download ${v.guide_url} and save it in this folder as vai-lsp-guide.md`,
+    '2. Create a file in this folder named vai-lsp-guide.md with EXACTLY this content:',
+    VAI_LSP_GUIDE_MD.replace(/\s+$/, ''),
     '',
-    "3. Add this line to my CLAUDE.md in this folder (create the file if it doesn't exist):",
+    "3. Add this line to my CLAUDE.md in this folder (create the file if it doesn't exist; keep existing lines):",
     '@vai-lsp-guide.md',
     '',
     '4. When steps 1-3 are done, give me EXACTLY these instructions and stop:',
