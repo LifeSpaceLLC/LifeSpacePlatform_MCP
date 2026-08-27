@@ -62,6 +62,48 @@ export function connectLine(s: RegistrationSummary): string {
   return `<b>${esc(what)}</b> wants to connect to <b>${esc(s.tenant?.name ?? 'LifeSpace')}</b>.`;
 }
 
+// ClaudeCode 2026-08-27 10:47 AM PDT — THE HEADLINE. Greg, 2026-08-27, after the
+// fourth unexplained tab: "the browser needs to identify itself — it didn't."
+// The 08-21 page led with `connectLine` — a sentence whose subject was the
+// asking tool and whose tenant name sat mid-line in bold. That reads fine when
+// you clicked something a second ago; it reads as nothing at all when the tab
+// appeared on its own during a Claude restart. So the tenant is now the first
+// thing on the page, at heading size, alone.
+/** Headline: the tenant this sign-in connects to, or the absence of one. */
+export function tenantHeadline(s: RegistrationSummary | undefined): string {
+  const name = s && s.status !== 'unknown' ? s.tenant?.name?.trim() : '';
+  if (name) {
+    return `<p class="tenantname"><span class="lead">Connecting to</span>${esc(name)}</p>`;
+  }
+  // An unregistered /mcp connection genuinely cannot know its tenant — the
+  // tenant is chosen after sign-in. Saying so LOUDLY is the point: it is the
+  // one thing that makes a folder get migrated to a registered address.
+  return '<p class="tenantname unnamed"><span class="lead">Connecting to</span>Unnamed connection</p>';
+}
+
+/** Line 2: which connection/folder asked. Registered → the labels an admin
+ *  typed when the connection was registered (server records). Unregistered →
+ *  the DCR client name and the origin derived from the redirect address; never
+ *  anything the caller typed about itself. */
+export function askedByLine(
+  s: RegistrationSummary | undefined,
+  clientName: string,
+  origin: string | undefined,
+): string {
+  if (s && s.status !== 'unknown') {
+    const session = s.session_label?.trim();
+    const folder = s.folder_label?.trim();
+    const what = session || folder || 'A registered connection';
+    const where = folder && folder !== what ? ` (folder <b>${esc(folder)}</b>)` : '';
+    return `Asked by <b>${esc(what)}</b>${where}.`;
+  }
+  const who = clientName ? esc(clientName) : 'An app';
+  const where = origin
+    ? (origin.startsWith('a local program') ? ' on this computer' : ` (${esc(origin)})`)
+    : '';
+  return `Asked by <b>${who}</b>${where} — this connection isn't registered, so it can't name a tenant.`;
+}
+
 // ClaudeCode 2026-08-06 11:18 AM PDT — the OAuth request carries no session
 // identity, but the redirect_uri does say where the callback lands, and that is
 // the one honest origin signal available. A loopback address means the asking
@@ -112,32 +154,42 @@ export const HINT_MAX = 80;
 // from the page entirely (they are still parsed and still preselect a radio in
 // the tenant picker — they simply have no place on a page this short). That is
 // strictly safer than showing them with a badge nobody read.
+//
+// ClaudeCode 2026-08-27 10:55 AM PDT — SUPERSEDES the line ordering above (the
+// three lines themselves stand). The 08-21 page assumed a person who had just
+// clicked something. The failure Greg actually hit four times is the opposite:
+// a Claude Code restart makes mcp-remote open this page BY ITSELF, in whatever
+// browser is frontmost, with no session able to say what it was. So the page now
+// leads with the TENANT NAME at heading size and demotes "who asked" to line two.
+// This is the SAME code path for the restart case and the /mcp → Authenticate
+// case — every sign-in reaches ConnectOAuthProvider.authorize(), registered
+// (/authorize/r/<id>) or not — so there is no second page to fix.
 export function renderInterstitial(o: InterstitialOptions): string {
   const summary = o.summary;
   const st = summary ? statusCopy(summary.status) : undefined;
   const canContinue = !summary || st!.ok;
 
-  // Line 1 + line 2. A registered connection names its session and its person; a
-  // legacy one cannot, and says so in a single red line instead.
+  // ClaudeCode 2026-08-27 10:52 AM PDT — headline + two lines + one button.
+  // Line order is now: WHO IS THIS FOR (the tenant, big) → WHO ASKED (the
+  // registered connection label / folder) → WHICH ACCOUNT. The old line 1 led
+  // with the asking tool, which answered the wrong question for a tab nobody
+  // clicked. `connectLine` is kept and still exported — it is the sentence form
+  // of the same two facts and other callers/tests read it.
+  //
   // ClaudeCode 2026-08-21 (Greg: "that is too vague — the name of the desired
   // tenant should be displayed"). An unregistered connection cannot PROVE a
   // tenant, but it can still say who is asking (the DCR client name + where it
   // runs). It must NOT echo what the asker claims (`?tenant_hint=` is untrusted).
-  const who = o.clientName ? esc(o.clientName) : 'An app';
-  const where = o.origin
-    ? (o.origin.startsWith('a local program') ? ' on this computer' : ` (${esc(o.origin)})`)
-    : '';
-  const line1 = summary && summary.status !== 'unknown'
-    ? connectLine(summary)
-    : `${who}${where} wants to connect to LifeSpace.`;
+  const headline = tenantHeadline(summary);
+  const line1 = askedByLine(summary, o.clientName, o.origin);
   const line2 = summary && summary.status !== 'unknown'
     ? signInLine(summary)
-    : 'Sign in with your LifeSpace account.';
+    : 'Sign in with your LifeSpace account — the tenant is chosen after sign-in.';
   // The caller-typed `tenant_hint` is deliberately NOT rendered (doctrine, 08-21:
   // nothing an asker can type appears on this page). A tenant is NAMED only on a
   // registered connection — that is what registrations are for.
   const notice = !summary || summary.status === 'unknown'
-    ? '<p class="stop">This connection isn\'t registered, so it cannot name a tenant — the tenant is chosen after sign-in.</p>'
+    ? '<p class="stop">Ask an administrator to register this connection so its sign-in page can name the tenant.</p>'
     : st!.ok
       ? ''
       : `<p class="stop">${esc(st!.blurb)}</p>`;
@@ -147,6 +199,7 @@ export function renderInterstitial(o: InterstitialOptions): string {
     : '<span class="btn btn-disabled" aria-disabled="true">Continue with Google</span>';
 
   return SHELL('LifeSpace Connect', `
+    ${headline}
     <p class="line">${line1}</p>
     <p class="line">${line2}</p>
     ${notice}
@@ -198,7 +251,11 @@ export function renderSeatRefused(o: {
   const use = o.intendedEmail
     ? `Sign in with <b>${esc(o.intendedEmail)}</b>.`
     : `Sign in with an account that has a seat on <b>${esc(o.tenantName)}</b>.`;
+  // ClaudeCode 2026-08-27 10:58 AM PDT — same headline rule as the sign-in page:
+  // the tenant is the first thing read, so "wrong account for WHAT" is answered
+  // before the refusal is.
   return SHELL('Wrong account', `
+    <p class="tenantname"><span class="lead">Connecting to</span>${esc(o.tenantName)}</p>
     <p class="line">That's not the right account.</p>
     <p class="line">${use}</p>
     ${o.retryUrl ? `<a class="btn" href="${esc(o.retryUrl)}">Try again</a>` : ''}`);

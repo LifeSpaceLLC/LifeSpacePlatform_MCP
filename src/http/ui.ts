@@ -49,5 +49,16 @@ label{display:flex;align-items:center;gap:8px;font-size:14px;color:#333;margin:4
 .copy{color:inherit;text-decoration:none}.copy:hover{text-decoration:underline}
 .offscreen{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
 .stop{font-size:15px;line-height:1.5;color:#b91c1c;margin:0 0 14px}
+/* ClaudeCode 2026-08-27 10:44 AM PDT — THE TENANT NAME IS THE PAGE. A tab that
+   opens by itself at a Claude restart has to answer "whose is this?" from
+   across the room, so the tenant is line one at heading size and everything
+   else is support underneath it. Greg, 2026-08-27: "the browser needs to
+   identify itself — it didn't". */
+.tenantname{font-size:28px;font-weight:700;line-height:1.25;color:#111;margin:0 0 6px;word-break:break-word}
+.tenantname .lead{display:block;font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;margin-bottom:4px}
+/* No registration = no tenant to name. Rendered in red on purpose: this is a
+   smell that should push the folder onto a registered /mcp/r/<id> address. */
+.tenantname.unnamed{color:#b91c1c}
+.tenantname.unnamed .lead{color:#b91c1c}
 .btn[disabled],.btn.btn-disabled{background:#e5e7eb;border-color:#e5e7eb;color:#9ca3af;cursor:not-allowed}</style>
 </head><body><div class="card">${body}<p class="muted">Powered by LifeSpace Trust</p></div></body></html>`;
