@@ -9,7 +9,23 @@
 //   GET  /v1/search            — ILIKE over key/name/trigger/description + tag
 //   POST /v1/resolve           — bodies + required_tools union (the Agent seam)
 import type { ToolDef, ToolHandler } from '../types.js';
-import { call, okText } from '../client.js';
+import { call, okText, errText } from '../client.js';
+
+// -- ClaudeCode 2026-08-30: the props lsp_skills_write actually forwards to the
+// Skills POST/PUT body (SkillBody in Skills/src/routes/skills.ts). Anything else
+// — notably `shared`, which lives on PATCH only — is rejected loudly rather than
+// silently dropped. Keep in sync with the write tool's inputSchema.
+const SKILLS_WRITE_KEYS = new Set([
+  'skill_key',
+  'name',
+  'description',
+  'trigger',
+  'body',
+  'required_tools',
+  'tags',
+  'signatures',
+  'source',
+]);
 
 export const tools: ToolDef[] = [
   {
@@ -66,6 +82,30 @@ export const tools: ToolDef[] = [
         },
       },
       required: ['skill_key'],
+      // -- ClaudeCode 2026-08-30: reject unknown props instead of silently
+      // dropping them. `shared` is NOT settable here (POST/PUT ignore it) — use
+      // lsp_skills_share. Silent param loss is a known platform bug class
+      // (Dispatch task 4f8d0e2e). The handler enforces this too, since the MCP
+      // server does not validate args against inputSchema.
+      additionalProperties: false,
+    },
+  },
+  {
+    // -- ClaudeCode 2026-08-30: dedicated share toggle. `shared` lives ONLY on
+    // PATCH /v1/skills/:key — POST/PUT (lsp_skills_write) drop it. This is the
+    // tool that flips a skill's cross-tenant sharing without routing through the
+    // Oracle by hand.
+    name: 'lsp_skills_share',
+    description:
+      "Set whether one of THIS tenant's skills is shared downward to descendant tenants. shared=true opts the skill into cross-tenant run-by-name AND catalog visibility for descendants (they see it via include_inherited); shared=false pulls it back local-only. Owning tenant only — you cannot change the share flag on a skill inherited from an ancestor. Use when the user says 'share this skill', 'make X available to child tenants', 'stop sharing X', 'pull X back local'.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        skill_key: { type: 'string', description: 'Slug of the skill to toggle (owned by this tenant).' },
+        shared: { type: 'boolean', description: 'true = share downward to descendants; false = local-only.' },
+      },
+      required: ['skill_key', 'shared'],
+      additionalProperties: false,
     },
   },
   {
@@ -122,6 +162,19 @@ export const handlers: Record<string, ToolHandler> = {
   },
   lsp_skills_write: async (args) => {
     const { skill_key, ...rest } = args as { skill_key: string } & Record<string, unknown>;
+    // -- ClaudeCode 2026-08-30: reject unknown props loudly. The MCP server does
+    // not validate args against inputSchema, so without this a caller that passes
+    // `shared` (or any typo'd field) would have it silently dropped by the Skills
+    // POST/PUT body parser. Point them at lsp_skills_share for `shared`.
+    const unknown = Object.keys(rest).filter((k) => !SKILLS_WRITE_KEYS.has(k));
+    if (unknown.length) {
+      const hint = unknown.includes('shared')
+        ? " — 'shared' is not settable here; use lsp_skills_share."
+        : '';
+      return errText(
+        new Error(`Unknown propert${unknown.length > 1 ? 'ies' : 'y'} for lsp_skills_write: ${unknown.join(', ')}${hint}`),
+      );
+    }
     // Create-or-update: POST first; on the 409 duplicate, PUT the working row.
     try {
       return okText(await call('skills', '/v1/skills', 'POST', { skill_key, ...rest }));
@@ -131,6 +184,17 @@ export const handlers: Record<string, ToolHandler> = {
       }
       throw err;
     }
+  },
+  // -- ClaudeCode 2026-08-30: flip a skill's downward share flag via PATCH.
+  lsp_skills_share: async (args) => {
+    const { skill_key, shared } = args as { skill_key?: string; shared?: unknown };
+    if (typeof skill_key !== 'string' || !skill_key) {
+      return errText(new Error('skill_key is required (string).'));
+    }
+    if (typeof shared !== 'boolean') {
+      return errText(new Error('shared is required (boolean).'));
+    }
+    return okText(await call('skills', `/v1/skills/${encodeURIComponent(skill_key)}`, 'PATCH', { shared }));
   },
   lsp_skills_publish: async (args) => {
     const { skill_key, change_note } = args as { skill_key: string; change_note?: string };
