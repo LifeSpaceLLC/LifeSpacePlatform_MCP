@@ -1,12 +1,40 @@
 // -- ClaudeCode: Dispatch MCP tools. Wraps POST /v1/send, GET /v1/messages, GET /v1/credits/balance.
 import type { ToolDef, ToolHandler } from '../types.js';
-import { call, okText } from '../client.js';
+import { call, okText, errText } from '../client.js';
+
+// -- ClaudeCode 2026-08-30: the ONLY valid top-level props for lsp_dispatch_send.
+// Dispatch's POST /v1/send destructures exactly these at the top level (send.ts)
+// and reads subject/fromEmail/fromName/replyTo ONLY out of `config` (the adapters,
+// sendgrid-email.ts). Promoting the email options to top-level params here means
+// mapping them into config before the call, and rejecting anything else loudly —
+// silent param loss is a known platform bug class (this is Dispatch task 4f8d0e2e:
+// a natural top-level `subject` used to be dropped, shipping mail titled
+// "Notification"). Keep in sync with the inputSchema below.
+const DISPATCH_SEND_KEYS = new Set([
+  'channel',
+  'recipient',
+  'body',
+  'user_id',
+  'cc',
+  'bcc',
+  'attachments',
+  'subject',
+  'fromEmail',
+  'fromName',
+  'replyTo',
+  'config',
+]);
+
+// -- ClaudeCode 2026-08-30: email options promoted to top-level params. Each is
+// mapped into `config` before the call (Dispatch reads them from there). An
+// explicit top-level value WINS over the same key nested in config (deterministic).
+const DISPATCH_EMAIL_PROMOTED = ['subject', 'fromEmail', 'fromName', 'replyTo'] as const;
 
 export const tools: ToolDef[] = [
   {
     name: 'lsp_dispatch_send',
     description:
-      "Send a message via Dispatch on any supported channel (SMS, email, Slack, Telegram, Pushover). Use this whenever the user says 'dispatch me', 'text me', 'email me when done', 'ping me', 'notify me', 'ding me', or similar. Dispatch resolves provider credentials from Keys, picks the right sender for the recipient's domain, and returns a message_id. Email supports multiple To recipients (pass an array), cc, bcc, and file attachments. Costs 1 credit for SMS; other channels are free.",
+      "Send a message via Dispatch on any supported channel (SMS, email, Slack, Telegram, Pushover). Use this whenever the user says 'dispatch me', 'text me', 'email me when done', 'ping me', 'notify me', 'ding me', or similar. Dispatch resolves provider credentials from Keys, picks the right sender for the recipient's domain, and returns a message_id. Email supports multiple To recipients (pass an array), cc, bcc, and file attachments. For email, set the subject, sender alias, and reply-to as TOP-LEVEL params: `subject` (the email subject line — omit it and the message ships titled 'Notification'), `fromName` (display name), `fromEmail` (a SendGrid-verified sender), and `replyTo` (email string or {email,name}). Costs 1 credit for SMS; other channels are free.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -52,14 +80,50 @@ export const tools: ToolDef[] = [
             required: ['filename', 'content'],
           },
         },
+        // -- ClaudeCode 2026-08-30: subject/fromEmail/fromName/replyTo promoted to
+        // top-level params (they used to be buried in config, where a natural
+        // top-level pass silently dropped them — Dispatch task 4f8d0e2e). The
+        // handler maps them into config before calling /v1/send; top-level wins
+        // over the same key nested in config.
+        subject: {
+          type: 'string',
+          description: "Email subject line (email channel only). Omit it and Dispatch titles the message 'Notification'.",
+        },
+        fromEmail: {
+          type: 'string',
+          description: 'Sender address (email channel only). Must be a SendGrid-verified sender for this tenant.',
+        },
+        fromName: {
+          type: 'string',
+          description: 'Sender display name (email channel only).',
+        },
+        replyTo: {
+          // -- ClaudeCode: email string OR { email, name }. Beats the tenant's stored default.
+          anyOf: [
+            { type: 'string' },
+            {
+              type: 'object',
+              properties: {
+                email: { type: 'string' },
+                name: { type: 'string' },
+              },
+              required: ['email'],
+            },
+          ],
+          description: 'Route replies elsewhere (email channel only). An email string, or { email, name }. Always beats the tenant\'s stored default.',
+        },
         config: {
           type: 'object',
           description:
-            "Channel-specific optional config. Email: { subject, fromEmail?, fromName?, replyTo? } — fromEmail must be a SendGrid-verified sender; fromName sets the display name; replyTo (email string or {email,name}) routes replies elsewhere and always beats the tenant's stored default. Pushover: { title?, priority?, sound?, url?, url_title? }.",
+            "Channel-specific optional config for anything not promoted to a top-level param. Email advanced keys: { text, style, headers, click_tracking, ... }. Pushover: { title?, priority?, sound?, url?, url_title? }. subject/fromEmail/fromName/replyTo are top-level params now — a top-level value wins if you also nest one here.",
           additionalProperties: true,
         },
       },
       required: ['channel', 'recipient', 'body'],
+      // -- ClaudeCode 2026-08-30: reject unknown top-level props instead of
+      // silently dropping them (Dispatch task 4f8d0e2e). The handler enforces
+      // this too — the MCP server does not validate args against inputSchema.
+      additionalProperties: false,
     },
   },
   {
@@ -105,7 +169,36 @@ export const tools: ToolDef[] = [
 ];
 
 export const handlers: Record<string, ToolHandler> = {
-  lsp_dispatch_send: async (args) => okText(await call('dispatch', '/v1/send', 'POST', args)),
+  // -- ClaudeCode 2026-08-30: reject unknown top-level props loudly and map the
+  // promoted email options into `config` before the call. Without this, a caller
+  // passing a natural top-level `subject` (or fromName/fromEmail/replyTo) had it
+  // silently dropped — Dispatch reads those only from config (Dispatch task
+  // 4f8d0e2e). The MCP server does not validate args against inputSchema, so the
+  // handler enforces the whitelist itself.
+  lsp_dispatch_send: async (args) => {
+    const a = (args ?? {}) as Record<string, unknown>;
+    const unknown = Object.keys(a).filter((k) => !DISPATCH_SEND_KEYS.has(k));
+    if (unknown.length) {
+      return errText(
+        new Error(
+          `Unknown top-level propert${unknown.length > 1 ? 'ies' : 'y'} for lsp_dispatch_send: ${unknown.join(', ')}. ` +
+            'Valid top-level keys: channel, recipient, body, user_id, cc, bcc, attachments, subject, fromEmail, fromName, replyTo, config. ' +
+            'Anything else goes inside config.',
+        ),
+      );
+    }
+    // Fold the promoted email options into config; an explicit top-level value
+    // WINS over the same key nested in config (deterministic).
+    const { config: rawConfig, ...top } = a;
+    const config: Record<string, unknown> = { ...((rawConfig as Record<string, unknown> | undefined) ?? {}) };
+    for (const key of DISPATCH_EMAIL_PROMOTED) {
+      if (top[key] !== undefined) config[key] = top[key];
+      delete top[key];
+    }
+    const payload: Record<string, unknown> = { ...top };
+    if (Object.keys(config).length) payload.config = config;
+    return okText(await call('dispatch', '/v1/send', 'POST', payload));
+  },
   lsp_dispatch_list_messages: async (args) => {
     const limit = (args as { limit?: number } | undefined)?.limit;
     const qs = limit ? `?limit=${limit}` : '';
