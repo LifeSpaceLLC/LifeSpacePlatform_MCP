@@ -30,10 +30,18 @@ export const tools: ToolDef[] = [
   },
   {
     name: 'lsp_knowledge_read',
-    description: 'Read a Knowledge doc at a tenant-relative path.',
+    description:
+      "Read a Knowledge doc at a tenant-relative path. Pass include_inherited:true to also check ancestor tenants' docs (child shadows parent) when the doc isn't in the caller tenant.",
     inputSchema: {
       type: 'object',
-      properties: { path: { type: 'string' } },
+      properties: {
+        path: { type: 'string' },
+        include_inherited: {
+          type: 'boolean',
+          description:
+            'Walk the tenant chain upward (parent, grandparent, …) if the doc is not found in the caller tenant. Default false — caller tenant only (fail-closed).',
+        },
+      },
       required: ['path'],
     },
   },
@@ -62,7 +70,7 @@ export const tools: ToolDef[] = [
         limit: { type: 'number', description: 'Max results (default 20, max 100).' },
         include_inherited: {
           type: 'boolean',
-          description: 'Walk the tenant chain upward (default true).',
+          description: 'Walk the tenant chain upward (default false — caller tenant only, fail-closed).',
         },
         include_content: {
           type: 'boolean',
@@ -109,8 +117,11 @@ export const handlers: Record<string, ToolHandler> = {
     return okText(await call('knowledge', docsPath(path), 'PUT', { content, frontmatter }));
   },
   lsp_knowledge_read: async (args) => {
-    const { path } = args as { path: string };
-    return okText(await call('knowledge', docsPath(path), 'GET'));
+    const { path, include_inherited } = args as { path: string; include_inherited?: boolean };
+    // -- ClaudeCode (2026-09-08): opt-in ancestor inheritance — GET /v1/docs/* honors
+    // ?include_inherited=true (fail-closed default stays: no param = caller tenant only).
+    const qs = include_inherited === true ? '?include_inherited=true' : '';
+    return okText(await call('knowledge', docsPath(path) + qs, 'GET'));
   },
   lsp_knowledge_delete: async (args) => {
     const { path } = args as { path: string };
