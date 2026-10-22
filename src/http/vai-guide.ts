@@ -11,3 +11,44 @@
 // MCP boot must be announced by name, not discovered.
 export const VAI_LSP_GUIDE_MD = "# VAI \u00d7 LifeSpace tools \u2014 operating guide (import from your CLAUDE.md: @vai-lsp-guide.md)\n\nYou are connected to the **VAI workspace** on the LifeSpace platform (LSP) via **LSP Tools** (the `lsp_*` MCP tools).\n\n## First, every session\n1. Run `lsp_trust_whoami` \u2014 confirm tenant is VAI.\n2. Your two operating documents live in Knowledge \u2014 read them before substantive work:\n   - `ai-documentation/vai-orientation.md` \u2014 VAI Orientation \u2014 the rules, terms, and operating practices\n   - `ai-documentation/lifespace-platform-module-reference.md` \u2014 every platform module you can build on (platform-maintained)\n   (`lsp_knowledge_read` with those paths.)\n\n## Non-negotiables (full versions in the Orientation doc)\n- Client data lives in that client's sub-tenant. Never cross tenants. Ask if unsure.\n- AI drafts; a human sends. Never bypass an approval gate.\n- Never touch: wires, funds, MLS credentials, new-lead outreach, price/terms advice.\n- Credentials only via Keys. Never in chat, files, or prompts.\n- VAI-owned skills and data use the `vai-` prefix.\n\n## If a sign-in tab opens\n- A LifeSpace sign-in page can open in the browser **by itself** while this session starts up \u2014 before you are awake. Say so in your **first message**, and name the tenant shown on that page so the person knows which one it belongs to.\n- The link to open it again is `auth_url` in `.claude/lsp-oauth-pending.json` in this folder. Hand over the URL; never click through a sign-in for someone.\n\n## Default behaviors\n- Track work in Tickets/Projects; save decisions to Memory; file documents in Knowledge \u2014 as they happen, not at session end.\n- Search before creating (Knowledge, Skills) \u2014 don't duplicate.\n- Verify writes by reading them back before reporting done.\n";
 export const VAI_GUIDE_FILENAME = 'vai-lsp-guide.md';
+
+// -- ClaudeCode 2026-10-22: the start page used to hand EVERY registration the VAI
+// guide above, so a 5050WOB folder was told to "set up my VAI workspace". The
+// guide is now chosen by the registration's tenant: VAI keeps its own; everyone
+// else gets this tenant-neutral guide with the tenant name filled in.
+export const LSP_GUIDE_FILENAME = 'lsp-guide.md';
+
+export function lspGuideMd(tenantName: string): string {
+  const t = tenantName.replace(/[*_`#\n]/g, '').trim() || 'your workspace';
+  return [
+    `# ${t} × LifeSpace tools — operating guide (import from your CLAUDE.md: @${LSP_GUIDE_FILENAME})`,
+    '',
+    `You are connected to the **${t}** workspace on the LifeSpace platform (LSP) via **LSP Tools** (the \`lsp_*\` MCP tools).`,
+    '',
+    '## First, every session',
+    `1. Run \`lsp_trust_whoami\` — confirm the tenant is ${t}.`,
+    '2. Platform modules you can build on are documented in Knowledge: `ai-documentation/lifespace-platform-module-reference.md` (`lsp_knowledge_read` with that path). Read it before substantive work.',
+    '',
+    '## Non-negotiables',
+    "- Data lives in its own tenant. Never cross tenants. Ask if unsure.",
+    '- AI drafts; a human sends. Never bypass an approval gate.',
+    '- Credentials only via Keys. Never in chat, files, or prompts.',
+    '',
+    '## If a sign-in tab opens',
+    '- A LifeSpace sign-in page can open in the browser **by itself** while this session starts up — before you are awake. Say so in your **first message**, and name the tenant shown on that page so the person knows which one it belongs to.',
+    '- The link to open it again is `auth_url` in `.claude/lsp-oauth-pending.json` in this folder. Hand over the URL; never click through a sign-in for someone.',
+    '',
+    '## Default behaviors',
+    '- Track work in Tickets/Projects; save decisions to Memory; file documents in Knowledge — as they happen, not at session end.',
+    "- Search before creating (Knowledge, Skills) — don't duplicate.",
+    '- Verify writes by reading them back before reporting done.',
+    '',
+  ].join('\n');
+}
+
+/** Which guide a registration gets, decided by its tenant name (server record). */
+export function guideForTenant(tenantName: string | null | undefined): { filename: string; md: string; tenant: string } {
+  const name = (tenantName ?? '').trim();
+  if (name.toUpperCase() === 'VAI') return { filename: VAI_GUIDE_FILENAME, md: VAI_LSP_GUIDE_MD, tenant: 'VAI' };
+  return { filename: LSP_GUIDE_FILENAME, md: lspGuideMd(name), tenant: name || 'your' };
+}

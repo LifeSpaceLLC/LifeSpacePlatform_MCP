@@ -49,7 +49,7 @@ import {
   renderRegistrationGonePage,
   guideUrlFor,
 } from './http/start-page.js';
-import { VAI_LSP_GUIDE_MD, VAI_GUIDE_FILENAME } from './http/vai-guide.js';
+import { guideForTenant } from './http/vai-guide.js';
 import { tenantName } from './http/tenants.js';
 // ClaudeCode 2026-08-19 01:44 PM PDT — per-registration resource URLs + their
 // management API. See http/registrations.ts for why the id lives in the URL.
@@ -132,10 +132,12 @@ app.get('/start/r/:regId/guide.md', async (req, res) => {
         .send(summary.status === 'unknown' ? 'Not found.\n' : 'This connection is no longer available.\n');
       return;
     }
+    // ClaudeCode 2026-10-22 — guide chosen by the registration's tenant.
+    const guide = guideForTenant(summary.tenant?.name);
     res
       .type('text/markdown; charset=utf-8')
-      .set('Content-Disposition', `inline; filename="${VAI_GUIDE_FILENAME}"`)
-      .send(VAI_LSP_GUIDE_MD);
+      .set('Content-Disposition', `inline; filename="${guide.filename}"`)
+      .send(guide.md);
   } catch {
     res.status(404).type('text/plain').send('Not found.\n');
   }

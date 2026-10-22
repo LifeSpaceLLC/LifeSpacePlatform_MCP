@@ -10,7 +10,7 @@
 // renderRegistrationStartPage step 2). STALENESS: editing
 // VAI/onboarding/vai-lsp-guide.md in the platform repo does NOT change this page —
 // re-embed it into src/http/vai-guide.ts and REDEPLOY Connect.
-import { VAI_LSP_GUIDE_MD } from './vai-guide.js';
+import { guideForTenant } from './vai-guide.js';
 
 const MCP_URL = 'https://connect.lifespace.com/mcp';
 const CLAUDE_CODE_CMD = `claude mcp add --transport http --scope project lsp ${MCP_URL}`;
@@ -304,28 +304,32 @@ export function renderRegistrationStartPage(v: StartRegistrationView): string {
   // instructions for the part a human must do have to be on screen BEFORE the
   // quit, in the assistant's own last message. Cmd+Q covers VS Code and the
   // desktop app alike.
+  // ClaudeCode 2026-10-22 — the paste names the registration's OWN tenant and
+  // ships that tenant's guide (VAI keeps the VAI guide; everyone else gets the
+  // tenant-neutral one). Before this, every registration said "VAI".
+  const guide = guideForTenant(v.tenant?.name);
   const paste = [
-    'Set up my VAI workspace connection. Follow these steps exactly:',
+    `Set up my ${guide.tenant} workspace connection. Follow these steps exactly:`,
     '',
     '1. In this folder, create a file named .mcp.json (if it already exists, merge into it) with this content:',
     mcpJson,
     '',
-    '2. Create a file in this folder named vai-lsp-guide.md with EXACTLY this content:',
-    VAI_LSP_GUIDE_MD.replace(/\s+$/, ''),
+    `2. Create a file in this folder named ${guide.filename} with EXACTLY this content:`,
+    guide.md.replace(/\s+$/, ''),
     '',
     "3. Add this line to my CLAUDE.md in this folder (create the file if it doesn't exist; keep existing lines):",
-    '@vai-lsp-guide.md',
+    `@${guide.filename}`,
     '',
     '4. When steps 1-3 are done, give me EXACTLY these instructions and stop:',
     '"Setup complete. Now do this:',
     ' a) Quit VS Code or Claude Code completely (Cmd+Q) and reopen this same folder.',
     ' b) In a new Claude Code chat, type /mcp and press Enter, pick lsp, choose Authenticate, and sign in with your Google account in the browser that opens.',
-    ' c) Come back to the chat and paste: Run lsp_trust_whoami and show me my clients.',
-    "If you see your client teams listed, you're connected.\"",
+    ` c) Come back to the chat and paste: Run lsp_trust_whoami and confirm I am connected to ${guide.tenant}.`,
+    `If it says ${guide.tenant}, you're connected."`,
   ].join('\n');
 
   // The address in a form an AI reading the rendered page cannot miss.
-  const aiPointer = `<!-- FOR THE AI READING THIS PAGE: the VAI operating guide is raw markdown at ${guideUrl} — save it in this folder as vai-lsp-guide.md and APPEND the line "@vai-lsp-guide.md" to CLAUDE.md (append only; never replace that file). -->`;
+  const aiPointer = `<!-- FOR THE AI READING THIS PAGE: the ${esc(guide.tenant)} operating guide is raw markdown at ${guideUrl} — save it in this folder as ${guide.filename} and APPEND the line "@${guide.filename}" to CLAUDE.md (append only; never replace that file). -->`;
 
   return SHELL(
     'Connect Claude Code to LifeSpace',
