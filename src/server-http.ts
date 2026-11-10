@@ -111,6 +111,58 @@ app.get('/start/r/:regId', async (req, res) => {
   }
 });
 
+// ClaudeCode 2026-11-10 02:40 PM PST — THE CONNECTOR FILE, tied to the registration.
+// Greg: "can't the onboarding instruction just include a connect URL and
+// instruction to save it". This is that URL. It returns the exact `.mcp.json`
+// a Claude Code folder needs for this registered connection, so the paste block
+// shrinks to one URL plus "save it". Public + tenant-safe by construction: the
+// body holds only the registration's own resource URL (already public in the
+// sign-in link) and a launcher shim; no token, no key, no tenant data. Unknown
+// → 404, revoked/expired → 410, same as the start page and the guide.
+//   command: a `sh -c` shim that prefers Greg's launcher (~/.claude/bin/lsp-mcp-launch:
+//   answers the MCP handshake at once, prints the sign-in link instead of opening
+//   a browser) and otherwise runs plain `npx mcp-remote@0.1.38`.
+//   env: a PER-FOLDER sign-in cache — the AI replaces <PROJECT_ROOT>.
+app.get('/start/r/:regId/mcp.json', async (req, res) => {
+  const id = String(req.params.regId ?? '');
+  if (!isRegistrationId(id)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  try {
+    const summary = await registrationSummary(id.toLowerCase());
+    if (summary.status !== 'active') {
+      res
+        .status(summary.status === 'unknown' ? 404 : 410)
+        .json({ error: summary.status === 'unknown' ? 'Not found' : 'This connection is no longer available' });
+      return;
+    }
+    const resource = `${CONNECT_BASE_URL}/mcp/r/${summary.registration_id}`;
+    const shim =
+      'if [ -x "$HOME/.claude/bin/lsp-mcp-launch" ]; then exec "$HOME/.claude/bin/lsp-mcp-launch" "$@"; else exec npx -y mcp-remote@0.1.38 "$@"; fi';
+    res
+      .type('application/json')
+      .set('Cache-Control', 'no-store')
+      .send(
+        JSON.stringify(
+          {
+            mcpServers: {
+              lsp: {
+                command: 'sh',
+                args: ['-c', shim, 'lsp', resource, '--transport', 'http-only'],
+                env: { MCP_REMOTE_CONFIG_DIR: '<PROJECT_ROOT>/.claude/mcp-auth' },
+              },
+            },
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+  } catch {
+    res.status(404).json({ error: 'Not found' });
+  }
+});
+
 // ClaudeCode 2026-08-25 — THE HOSTED OPERATING GUIDE, tied to the registration.
 // The start page tells the teammate's Claude to fetch this; serving it here means
 // the invite email is nothing but a link, and an id we can't vouch for yields no
