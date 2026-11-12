@@ -1,4 +1,4 @@
-// -- ClaudeCode 2026-11-12 03:14 PM PDT: OFFLINE check of the lsp_spaces_* tools.
+// -- ClaudeCode 2026-11-12 03:14 PM PST: OFFLINE check of the lsp_spaces_* tools.
 // No network: global fetch is replaced by a recorder before any handler runs.
 // Proves (1) every lsp_spaces_* tool has a name, description, input schema and a
 // handler; (2) the module is registered under id `spaces` in the HTTP transport

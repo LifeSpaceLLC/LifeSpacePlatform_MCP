@@ -23,7 +23,7 @@ import * as agent from '../services/agent.js';
 import * as flow from '../services/flow.js';
 import * as tickets from '../services/tickets.js';
 import * as site from '../services/site.js';
-// -- ClaudeCode 2026-11-12 03:14 PM PDT: Spaces module.
+// -- ClaudeCode 2026-11-12 03:14 PM PST: Spaces module.
 import * as spaces from '../services/spaces.js';
 import type { ToolDef, ToolHandler } from '../types.js';
 
@@ -51,7 +51,7 @@ const MODULES: Array<{ id: string; mod: { tools: ToolDef[]; handlers: Record<str
   { id: 'flow', mod: flow },
   { id: 'tickets', mod: tickets },
   { id: 'site', mod: site },
-  // -- ClaudeCode 2026-11-12 03:14 PM PDT: module id is exactly `spaces`.
+  // -- ClaudeCode 2026-11-12 03:14 PM PST: module id is exactly `spaces`.
   { id: 'spaces', mod: spaces },
 ];
 

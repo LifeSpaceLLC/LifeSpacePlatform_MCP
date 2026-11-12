@@ -28,7 +28,7 @@ import * as agent from './services/agent.js';
 import * as flow from './services/flow.js';
 import * as tickets from './services/tickets.js';
 import * as site from './services/site.js';
-// -- ClaudeCode 2026-11-12 03:14 PM PDT: Spaces module.
+// -- ClaudeCode 2026-11-12 03:14 PM PST: Spaces module.
 import * as spaces from './services/spaces.js';
 import { errText } from './client.js';
 import { startTokenRenewal } from './token-renewal.js';
@@ -42,7 +42,7 @@ if (process.argv.slice(2).includes('login')) {
   process.exit(await login());
 }
 
-const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture, canvas, calendar, assistant, listen, skills, agent, flow, tickets, site, spaces]; // -- ClaudeCode 2026-11-12 03:14 PM PDT: + spaces
+const modules = [dispatch, keys, memory, knowledge, projects, library, tenant, trust, handoff, promote, capture, canvas, calendar, assistant, listen, skills, agent, flow, tickets, site, spaces]; // -- ClaudeCode 2026-11-12 03:14 PM PST: + spaces
 
 const allTools: ToolDef[] = modules.flatMap((m) => m.tools);
 const allHandlers: Record<string, ToolHandler> = Object.assign(

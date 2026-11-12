@@ -25,7 +25,7 @@ export type ServiceId =
   | 'flow'
   | 'tickets'
   | 'site'
-  // -- ClaudeCode 2026-11-12 03:14 PM PDT: Spaces (Chief of Staff) module.
+  // -- ClaudeCode 2026-11-12 03:14 PM PST: Spaces (Chief of Staff) module.
   | 'spaces';
 
 export interface ServiceConfig {
@@ -172,9 +172,10 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     repoDir: 'Site',
     deployed: true,
   },
-  // -- ClaudeCode 2026-11-12 03:14 PM PDT: Spaces — sub-tenants of a customer's
-  // top tenant, shared vs isolated connections. NOT deployed yet (absent from
-  // DEPLOYMENT_STATUS.md); flip `deployed` to true once the service is live.
+  // -- ClaudeCode 2026-11-12 03:14 PM PST: Spaces — sub-tenants of a customer's
+  // top tenant, shared vs isolated connections. The service is deployed
+  // (2026-11-12) but its live checks have NOT run; `deployed` stays false, so every
+  // tool answers "not deployed", until those checks pass. Then flip it to true.
   // Override via LSP_SPACES_URL.
   spaces: {
     url: process.env.LSP_SPACES_URL ?? 'https://lifespace-spaces-production.up.railway.app',
