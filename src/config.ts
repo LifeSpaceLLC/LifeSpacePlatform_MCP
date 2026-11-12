@@ -24,7 +24,9 @@ export type ServiceId =
   | 'agent'
   | 'flow'
   | 'tickets'
-  | 'site';
+  | 'site'
+  // -- ClaudeCode 2026-11-12 03:14 PM PDT: Spaces (Chief of Staff) module.
+  | 'spaces';
 
 export interface ServiceConfig {
   url: string;
@@ -169,6 +171,16 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     personalEnvVar: 'SITE_ADMIN_API_KEY',
     repoDir: 'Site',
     deployed: true,
+  },
+  // -- ClaudeCode 2026-11-12 03:14 PM PDT: Spaces — sub-tenants of a customer's
+  // top tenant, shared vs isolated connections. NOT deployed yet (absent from
+  // DEPLOYMENT_STATUS.md); flip `deployed` to true once the service is live.
+  // Override via LSP_SPACES_URL.
+  spaces: {
+    url: process.env.LSP_SPACES_URL ?? 'https://lifespace-spaces-production.up.railway.app',
+    personalEnvVar: 'SPACES_ADMIN_API_KEY',
+    repoDir: 'Spaces',
+    deployed: false,
   },
 };
 
