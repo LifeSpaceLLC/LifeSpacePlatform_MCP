@@ -665,7 +665,7 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_filter_get',
     description:
-      `Read the filter file of one Space for one connection. Without version: the current filter. With version: that older version (its four sender lists are shown as they are now; lists_note says so). Returns Spaces' answer as is: {space_tenant_id, connection_id, version, lists_fingerprint, updated_by, updated_at, file}, where the file carries the gmail_query the server built from it. Before any filter exists the answer is {filter: null, message, lists_fingerprint} (no filter yet), not an error; keep that lists_fingerprint for the first write. The account owner, or a seat on that Space when the Space may use the connection, may read it. ${FILTER_PARTS}`,
+      `Read the filter file of one Space for one connection. Without version: the current filter. With version: that older version (its four sender lists are shown as they are now; lists_note says so). Returns Spaces' answer as is: {space_tenant_id, connection_id, version, lists_fingerprint, updated_by, updated_at, file}, where the file carries the gmail_query the server built from it. Before any filter exists the answer is {filter: null, message, lists_fingerprint, lists} (no filter yet), not an error. lists holds the Space's current four sender lists, which may already be set through another connection; keep that lists_fingerprint for the first write. The account owner, or a seat on that Space when the Space may use the connection, may read it. ${FILTER_PARTS}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -680,7 +680,7 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_filter_put',
     description:
-      `Write a new version of the filter file of one Space for one connection. The account owner only; a seat is refused. The file is sent as is. The server builds the Gmail search (gmail_query) from the file and ignores one sent in. A list left out is unchanged, and an explicit [] clears it. The four sender lists are shared by every connection of the Space, so changing one changes it for all of them. When sending any list, pass the lists_fingerprint from the last get. Pass base_version (the version you read) once a filter exists; leave it out only for the first write. A 409 means it changed: get it again and redo the change. This tool does not retry by itself. Returns the saved filter, as lsp_spaces_filter_get does. ${FILTER_PARTS}`,
+      `Write a new version of the filter file of one Space for one connection. The account owner only; a seat is refused. The file is sent as is. The server builds the Gmail search (gmail_query) from the file and ignores one sent in. A list left out is unchanged, and an explicit [] clears it. So send only the sender lists you mean to change, and never send one you did not read first. The four sender lists are shared by every connection of the Space, so changing one changes it for all of them. When sending any list, pass the lists_fingerprint from the last get. Pass base_version (the version you read) once a filter exists; leave it out only for the first write. A 409 means it changed: get it again and redo the change. This tool does not retry by itself. Returns the saved filter, as lsp_spaces_filter_get does. ${FILTER_PARTS}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -849,7 +849,7 @@ export const handlers: Record<string, ToolHandler> = {
     try {
       return await call('spaces', path, 'GET');
     } catch (e) {
-      const err = e as { status?: number; body?: { error?: unknown; lists_fingerprint?: unknown } };
+      const err = e as { status?: number; body?: { error?: unknown; lists_fingerprint?: unknown; file?: unknown } };
       if (a.version === undefined && err.status === 404 && typeof err.body?.lists_fingerprint === 'string') {
         return {
           space_tenant_id: a.space_tenant_id,
@@ -857,6 +857,9 @@ export const handlers: Record<string, ToolHandler> = {
           filter: null,
           message: typeof err.body.error === 'string' ? err.body.error : 'No filter yet.',
           lists_fingerprint: err.body.lists_fingerprint,
+          // -- ClaudeCode 2026-11-13 (lists truth): the Space's CURRENT four sender lists (shared by
+          // every connection of the Space), when Spaces sends them with the 404; never invented here.
+          ...(err.body.file && typeof err.body.file === 'object' ? { lists: err.body.file } : {}),
         };
       }
       throw e;
