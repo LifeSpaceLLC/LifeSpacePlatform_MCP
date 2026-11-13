@@ -37,7 +37,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 29 lsp_spaces_* tools', spacesTools.length === 29, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (problems): +problems, +refresh
+assert('spaces module exposes 31 lsp_spaces_* tools', spacesTools.length === 31, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
     t.name.startsWith('lsp_spaces_') && t.description.length > 20
@@ -115,6 +115,9 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   ['lsp_spaces_problems', { scope: 'one', space: S }, 'GET', `/v1/problems?scope=one&spaces=${S}`, undefined],
   ['lsp_spaces_refresh', { scope: 'all' }, 'POST', '/v1/connections/refresh', { scope: 'all' }],
   ['lsp_spaces_refresh', { scope: 'one', space: S }, 'POST', '/v1/connections/refresh', { scope: 'one', spaces: [S] }],
+  // -- ClaudeCode 2026-11-13 (add a Space):
+  ['lsp_spaces_space_add', { name: 'ZZ-FIXTURE Ari' }, 'POST', '/v1/spaces', { name: 'ZZ-FIXTURE Ari' }],
+  ['lsp_spaces_space_rename', { space_id: S, name: 'ZZ-FIXTURE Home' }, 'PATCH', `/v1/spaces/${S}`, { name: 'ZZ-FIXTURE Home' }],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -158,6 +161,19 @@ assert('problems says connecting again is a person\'s action', desc('lsp_spaces_
 assert('refresh says it works only for the account owner\'s admin sign-in', desc('lsp_spaces_refresh').includes("only for the account owner's admin sign-in"));
 assert('overview: the customer one-Space answer lists every shared connection', desc('lsp_spaces_overview').includes('EVERY shared connection'));
 assert('problems and refresh descriptions name no mailbox', !/mailbox/i.test(desc('lsp_spaces_problems') + desc('lsp_spaces_refresh')));
+// -- ClaudeCode 2026-11-13 (add a Space): owner-only, wall-not-folder, never delete.
+for (const n of ['lsp_spaces_space_add', 'lsp_spaces_space_rename']) {
+  assert(`${n} says only the account owner's admin sign-in`, desc(n).includes("only for the account owner's admin sign-in"));
+  assert(`${n} says a Space is a wall, not a folder`, desc(n).includes('A Space is a wall, not a folder'));
+  assert(`${n} says never delete`, /never (try to remove|delete) one/.test(desc(n)));
+}
+assert('space_add says add one only when the owner wants things kept apart', desc('lsp_spaces_space_add').includes('only when the owner wants things kept apart'));
+{
+  const n0 = calls.length;
+  const extra = await spaces.handlers.lsp_spaces_space_rename({ space_id: S, name: 'x', config: { space: false } });
+  const noId = await spaces.handlers.lsp_spaces_space_rename({ name: 'x' });
+  assert('space_rename refuses config and a missing space_id without a request', !!extra.isError && !!noId.isError && calls.length === n0);
+}
 const covered = new Set(cases.map((c) => c[0]));
 assert('every tool has a route case', spaces.tools.every((t) => covered.has(t.name)));
 
