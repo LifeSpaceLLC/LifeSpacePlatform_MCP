@@ -11,16 +11,17 @@ delete process.env.LSP_TOKEN;
 // not a credential, and it never leaves this process (fetch is stubbed).
 process.env.LSP_SPACES_ADMIN_API_KEY = 'offline-check-placeholder';
 
-type Rec = { method: string; url: string; body?: unknown };
+type Rec = { method: string; url: string; body?: unknown; auth?: string };
 const calls: Rec[] = [];
-globalThis.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
-  calls.push({ method: init?.method ?? 'GET', url: String(url), body: init?.body ? JSON.parse(init.body) : undefined });
+globalThis.fetch = (async (url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
+  calls.push({ method: init?.method ?? 'GET', url: String(url), body: init?.body ? JSON.parse(init.body) : undefined, auth: init?.headers?.Authorization });
   return new Response(JSON.stringify({ ok: true }), { status: 200 });
 }) as typeof fetch;
 
 const spaces = await import('./services/spaces.js');
 const { SERVICES } = await import('./config.js');
 const { allTools, TOOL_MODULE, toolsForClaims, canCallTool } = await import('./http/tools.js');
+const { requestContext } = await import('./request-context.js');
 
 let failed = 0;
 function assert(name: string, ok: boolean, detail = ''): void {
@@ -62,14 +63,21 @@ assert('role=user without "spaces" sees none and cannot call them',
   !without.some((n) => n.startsWith('lsp_spaces_'))
   && !canCallTool('lsp_spaces_placements_list', { role: 'user', modules: ['projects'] }));
 
-// (4) not-deployed guard (before flipping the flag for the route checks)
-assert('Spaces is flagged not deployed', SERVICES.spaces.deployed === false);
+assert('an admin role sees the spaces tools (as for every module)',
+  spacesTools.every((t) => toolsForClaims({ role: 'admin', modules: null }).some((a) => a.name === t.name)));
+assert('role=user with module "spaces" may call them', canCallTool('lsp_spaces_placements_list', { role: 'user', modules: ['spaces'] }));
+
+// (4) the tools are switched on (2026-11-12, service verified live), and the
+// not-deployed guard still holds when the flag is off (flipped in-process only).
+assert('Spaces is flagged deployed', SERVICES.spaces.deployed === true);
+assert('Spaces address is https on the lifespace.com domain', /^https:\/\/spaces\.lifespace\.com$/.test(SERVICES.spaces.url), SERVICES.spaces.url);
+SERVICES.spaces.deployed = false;
 let guarded = false;
 try { await spaces.handlers.lsp_spaces_holds_list({ tenant_id: T }); } catch (e) { guarded = String(e).includes('not deployed'); }
 assert('a call while not deployed throws "not deployed" and makes no request', guarded && calls.length === 0);
-
-// (3) route mapping — flip the flag in-process only, fetch is still the stub.
 SERVICES.spaces.deployed = true;
+
+// (3) route mapping — fetch is still the stub.
 const cases: Array<[string, Record<string, unknown>, string, string, unknown]> = [
   ['lsp_spaces_settings_get', { tenant_id: T }, 'GET', `/v1/settings/${T}`, undefined],
   ['lsp_spaces_settings_get', { tenant_id: T, key: 'brief' }, 'GET', `/v1/settings/${T}/brief`, undefined],
@@ -99,6 +107,23 @@ for (const [tool, args, method, path, body] of cases) {
     && JSON.stringify(c.body) === JSON.stringify(body);
   assert(`${tool} → ${method} ${path}`, ok, c ? `${c.method} ${c.url} ${JSON.stringify(c.body)}` : 'no call');
 }
+// (5) reach: every request went to the Spaces service and nowhere else (no
+// Keys, Trust or Tenant), and the scope is passed through as given.
+assert('every request went to the Spaces address only', calls.every((c) => c.url.startsWith(`${BASE}/v1/`)));
+for (const scope of ['all', 'one', 'some']) {
+  const n = calls.length;
+  await spaces.handlers.lsp_spaces_placements_list(scope === 'all' ? { scope } : { scope, spaces: [S] });
+  const u = new URL(calls[calls.length - 1].url);
+  assert(`placements_list passes scope=${scope} through unchanged`,
+    calls.length === n + 1 && u.searchParams.get('scope') === scope
+      && (scope === 'all' ? !u.searchParams.has('spaces') : u.searchParams.get('spaces') === S));
+}
+// (6) the caller's own sign-in: in the HTTP transport the per-request bearer is
+// what reaches Spaces, not the process's own credential.
+await requestContext.run({ bearer: 'caller-jwt-offline-placeholder' }, async () => {
+  await spaces.handlers.lsp_spaces_settings_get({ tenant_id: T });
+});
+assert('HTTP transport: the request carries the CALLER\'s bearer', calls[calls.length - 1].auth === 'Bearer caller-jwt-offline-placeholder');
 const covered = new Set(cases.map((c) => c[0]));
 assert('every tool has a route case', spaces.tools.every((t) => covered.has(t.name)));
 

@@ -173,15 +173,15 @@ export const SERVICES: Record<ServiceId, ServiceConfig> = {
     deployed: true,
   },
   // -- ClaudeCode 2026-11-12 03:14 PM PST: Spaces — sub-tenants of a customer's
-  // top tenant, shared vs isolated connections. The service is deployed
-  // (2026-11-12) but its live checks have NOT run; `deployed` stays false, so every
-  // tool answers "not deployed", until those checks pass. Then flip it to true.
+  // top tenant, shared vs isolated connections. Deployed and verified live
+  // with sample data on 2026-11-12 (QA smoke run: 30 pass, 0 fail), so the tools
+  // are switched on.
   // Override via LSP_SPACES_URL.
   spaces: {
-    url: process.env.LSP_SPACES_URL ?? 'https://lifespace-spaces-production.up.railway.app',
+    url: process.env.LSP_SPACES_URL ?? 'https://spaces.lifespace.com',
     personalEnvVar: 'SPACES_ADMIN_API_KEY',
     repoDir: 'Spaces',
-    deployed: false,
+    deployed: true,
   },
 };
 
