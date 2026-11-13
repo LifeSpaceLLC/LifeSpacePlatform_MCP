@@ -50,7 +50,7 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_connection_update: ['id', 'tenant_id', 'label', 'access', 'status'],
   lsp_spaces_space_connections: ['space_tenant_id'],
   lsp_spaces_allow_set: ['space_tenant_id', 'connection_id', 'mode'],
-  lsp_spaces_placements_list: ['scope', 'spaces', 'since', 'before', 'limit'],
+  lsp_spaces_placements_list: ['scope', 'spaces', 'topic', 'since', 'before', 'limit'],
   lsp_spaces_placement_add: [
     'tenant_id', 'connection_id', 'item_id', 'sender', 'subject', 'reason',
     'item_date', 'space_tenant_ids', 'step', 'run_id', 'detail_expires_at',
@@ -66,7 +66,7 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_holds_answer: ['id', 'answer'],
   // -- ClaudeCode 2026-11-12 (dashboard parity):
   lsp_spaces_me: [],
-  lsp_spaces_overview: ['scope', 'space'],
+  lsp_spaces_overview: ['scope', 'space', 'topic'],
   lsp_spaces_connection_spaces: ['connection_id'],
   lsp_spaces_connection_wants_set: ['space_tenant_id', 'connection_id', 'text'],
   lsp_spaces_connect: ['tenant_id', 'label', 'return_to'],
@@ -75,11 +75,16 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_connect_status: ['connection_id'],
   lsp_spaces_read_put: ['tenant_id', 'scope', 'text', 'run_id'],
   // -- ClaudeCode 2026-11-13 (problems):
-  lsp_spaces_problems: ['scope', 'space'],
+  lsp_spaces_problems: ['scope', 'space', 'topic'],
   lsp_spaces_refresh: ['scope', 'space'],
   // -- ClaudeCode 2026-11-13 (add a Space):
   lsp_spaces_space_add: ['name'],
   lsp_spaces_space_rename: ['space_id', 'name'],
+  // -- ClaudeCode 2026-11-13 (topics):
+  lsp_spaces_topics_list: ['space_id'],
+  lsp_spaces_topic_add: ['space_id', 'name', 'wants', 'connection_ids'],
+  lsp_spaces_topic_update: ['topic_id', 'name', 'wants', 'connection_ids', 'position'],
+  lsp_spaces_topic_remove: ['topic_id'],
 };
 
 export const tools: ToolDef[] = [
@@ -192,8 +197,9 @@ export const tools: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        scope: { type: 'string', enum: ['all', 'one', 'some'] },
+        scope: { type: 'string', enum: ['all', 'one', 'some', 'topic'] },
         spaces: { ...UUIDS, description: 'Space tenant uuids for scope one/some.' },
+        topic: { type: 'string', description: 'The topic uuid, for scope topic (from lsp_spaces_topics_list or lsp_spaces_me). Narrows to that topic only.' },
         since: { type: 'string', description: 'Optional ISO time: only items placed at or after it.' },
         before: { type: 'string', description: 'Optional paging cursor: pass the previous answer\'s next_before, unchanged, to get the next (older) page. A plain ISO time also works: only items placed before it.' },
         limit: { type: 'number', description: 'Optional page size, 1 to 200 (default 50). Newest first.' },
@@ -368,12 +374,13 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_overview',
     description:
-      "The Spaces dashboard in one read: a short written read, counts, the connections with their plain status, items waiting for an answer, and where recent items went. Its `placements` list is only the newest page: `placements_page` {count, total, has_more, next_before} says how much more exists; read the rest with lsp_spaces_placements_list. For the customer, a one-Space answer also lists EVERY shared connection with that Space's own state on it (allowed, blocked or not listed); for a seat on a Space, only the connections it may use now. Each connection carries refreshed_at and stale: a stale connection is shown as \"Not checked since <time>\", never as connected. Every question has a scope. Pass `scope` = `all` for the rollup or `one` with one Space id. The service returns only what the caller may see in that scope; never widen a scope to be helpful.",
+      "The Spaces dashboard in one read: a short written read, counts, the connections with their plain status, items waiting for an answer, and where recent items went. Its `placements` list is only the newest page: `placements_page` {count, total, has_more, next_before} says how much more exists; read the rest with lsp_spaces_placements_list. For the customer, a one-Space answer also lists EVERY shared connection with that Space's own state on it (allowed, blocked or not listed); for a seat on a Space, only the connections it may use now. Each connection carries refreshed_at and stale: a stale connection is shown as \"Not checked since <time>\", never as connected. Every question has a scope. Pass `scope` = `all` for the rollup, `one` with one Space id, or `topic` with one topic id (the same dashboard narrowed to that topic: its connections and the items tagged with it; a topic only ever narrows its Space). The service returns only what the caller may see in that scope; never widen a scope to be helpful.",
     inputSchema: {
       type: 'object',
       properties: {
-        scope: { type: 'string', enum: ['all', 'one'] },
+        scope: { type: 'string', enum: ['all', 'one', 'topic'] },
         space: { type: 'string', description: 'The one Space tenant uuid, for scope one.' },
+        topic: { type: 'string', description: 'The topic uuid, for scope topic (from lsp_spaces_topics_list or lsp_spaces_me). Narrows to that topic only.' },
       },
       required: ['scope'],
       additionalProperties: false,
@@ -480,8 +487,9 @@ export const tools: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        scope: { type: 'string', enum: ['all', 'one'] },
+        scope: { type: 'string', enum: ['all', 'one', 'topic'] },
         space: { type: 'string', description: 'The one Space tenant uuid, for scope one.' },
+        topic: { type: 'string', description: 'The topic uuid, for scope topic (from lsp_spaces_topics_list or lsp_spaces_me). Narrows to that topic only.' },
       },
       required: ['scope'],
       additionalProperties: false,
@@ -526,6 +534,63 @@ export const tools: ToolDef[] = [
         name: { type: 'string', description: 'The new name: one line, 1 to 80 characters.' },
       },
       required: ['space_id', 'name'],
+      additionalProperties: false,
+    },
+  },
+  // -- ClaudeCode 2026-11-13 (topics): a TOPIC is a light thing inside a Space: a name, one
+  // plain "what to look for" text and which connections it draws from. Not a wall.
+  {
+    name: 'lsp_spaces_topics_list',
+    description:
+      "List the topics of one Space. A topic is a name plus one plain text saying what to look for, inside a Space; it draws from every connection its Space may use unless narrowed (connection_ids). A topic is NOT a wall: everyone who can see the Space sees its topics. The customer may list any of its Spaces; a seat only its own. Returns {space_tenant_id, topics:[{id, space_tenant_id, name, wants, connection_ids, position, created_at, updated_at, counts:{placed}}]}.",
+    inputSchema: {
+      type: 'object',
+      properties: { space_id: { type: 'string', description: 'The Space tenant uuid.' } },
+      required: ['space_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_topic_add',
+    description:
+      "Add a topic to a Space, so items about one thing are tagged with it and can be looked at on their own. Use a topic, not a new Space, for one subject inside an area (a new Space is a wall and is the owner's call). The customer may add to any of its Spaces; a seat to its own Space. `name`: one line, 1 to 80 characters. `wants`: what to look for, in plain words (optional; until it is set, nothing is tagged with the topic). `connection_ids`: optional; leave it out to draw from every connection the Space may use, or name some of them (each must be usable by that Space now, else 422). Returns the topic.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_id: { type: 'string', description: 'The Space tenant uuid.' },
+        name: { type: 'string', description: 'The topic name: one line, 1 to 80 characters.' },
+        wants: { type: 'string', description: 'What to look for, in plain words (up to 2000 characters).' },
+        connection_ids: { type: 'array', items: { type: 'string' }, description: 'Optional: only these connections (uuids). Leave out for all the Space may use.' },
+      },
+      required: ['space_id', 'name'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_topic_update',
+    description:
+      "Change a topic: its name, what to look for, which connections it draws from (null = all the Space may use again), or its position in the list. The customer, or a seat on the topic's Space. Returns the topic.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        topic_id: { type: 'string', description: 'The topic uuid.' },
+        name: { type: 'string' },
+        wants: { type: ['string', 'null'], description: 'What to look for; null or empty clears it.' },
+        connection_ids: { type: ['array', 'null'], items: { type: 'string' }, description: 'Only these connections; null = all the Space may use.' },
+        position: { type: 'number' },
+      },
+      required: ['topic_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_topic_remove',
+    description:
+      "Remove a topic. The account owner only; a seat is refused. The items stay in the Space; only their tag for this topic goes. Ask the owner before removing. Returns {deleted, id}.",
+    inputSchema: {
+      type: 'object',
+      properties: { topic_id: { type: 'string', description: 'The topic uuid.' } },
+      required: ['topic_id'],
       additionalProperties: false,
     },
   },
@@ -592,6 +657,7 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', `/v1/placements${qs({
       scope: a.scope,
       spaces: Array.isArray(a.spaces) ? a.spaces.join(',') : a.spaces,
+      topic: a.topic,
       since: a.since,
       before: a.before,
       limit: typeof a.limit === 'number' ? String(a.limit) : a.limit,
@@ -619,7 +685,7 @@ export const handlers: Record<string, ToolHandler> = {
   // -- ClaudeCode 2026-11-12 (dashboard parity):
   lsp_spaces_me: handler('lsp_spaces_me', [], () => call('spaces', '/v1/me', 'GET')),
   lsp_spaces_overview: handler('lsp_spaces_overview', [], (a) =>
-    call('spaces', `/v1/overview${qs({ scope: a.scope, spaces: a.space })}`, 'GET')),
+    call('spaces', `/v1/overview${qs({ scope: a.scope, spaces: a.space, topic: a.topic })}`, 'GET')),
   lsp_spaces_connection_spaces: handler('lsp_spaces_connection_spaces', ['connection_id'], (a) =>
     call('spaces', `/v1/connections/${enc(a.connection_id)}/spaces`, 'GET')),
   lsp_spaces_connection_wants_set: handler('lsp_spaces_connection_wants_set', ['space_tenant_id', 'connection_id'], (a) =>
@@ -636,7 +702,7 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', '/v1/reads', 'PUT', body(a, FIELDS.lsp_spaces_read_put))),
   // -- ClaudeCode 2026-11-13 (problems):
   lsp_spaces_problems: handler('lsp_spaces_problems', [], (a) =>
-    call('spaces', `/v1/problems${qs({ scope: a.scope, spaces: a.space })}`, 'GET')),
+    call('spaces', `/v1/problems${qs({ scope: a.scope, spaces: a.space, topic: a.topic })}`, 'GET')),
   lsp_spaces_refresh: handler('lsp_spaces_refresh', [], (a) =>
     call('spaces', '/v1/connections/refresh', 'POST', { scope: a.scope, ...(typeof a.space === 'string' && a.space ? { spaces: [a.space] } : {}) })),
   // -- ClaudeCode 2026-11-13 (add a Space):
@@ -644,4 +710,13 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', '/v1/spaces', 'POST', body(a, ['name']))),
   lsp_spaces_space_rename: handler('lsp_spaces_space_rename', ['space_id'], (a) =>
     call('spaces', `/v1/spaces/${enc(a.space_id)}`, 'PATCH', body(a, ['name']))),
+  // -- ClaudeCode 2026-11-13 (topics):
+  lsp_spaces_topics_list: handler('lsp_spaces_topics_list', ['space_id'], (a) =>
+    call('spaces', `/v1/spaces/${enc(a.space_id)}/topics`, 'GET')),
+  lsp_spaces_topic_add: handler('lsp_spaces_topic_add', ['space_id'], (a) =>
+    call('spaces', `/v1/spaces/${enc(a.space_id)}/topics`, 'POST', body(a, ['name', 'wants', 'connection_ids']))),
+  lsp_spaces_topic_update: handler('lsp_spaces_topic_update', ['topic_id'], (a) =>
+    call('spaces', `/v1/topics/${enc(a.topic_id)}`, 'PATCH', body(a, ['name', 'wants', 'connection_ids', 'position']))),
+  lsp_spaces_topic_remove: handler('lsp_spaces_topic_remove', ['topic_id'], (a) =>
+    call('spaces', `/v1/topics/${enc(a.topic_id)}`, 'DELETE')),
 };
