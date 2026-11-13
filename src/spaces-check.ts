@@ -208,7 +208,13 @@ for (const n of ['lsp_spaces_sorting_start', 'lsp_spaces_runs_list']) {
   assert(`${n} carries the cache rule`, desc(n).includes('Under the default cache setting, sender, subject and why an item was placed are not kept in the cloud.'));
 }
 assert('runs_list says a run lists counts only', desc('lsp_spaces_runs_list').includes('A run lists counts only'));
-assert('runs_list says the runner\'s routes have no tool', desc('lsp_spaces_runs_list').includes("the runner's alone and has no tool here"));
+assert('runs_list says the filter on your computer\'s routes have no tool', desc('lsp_spaces_runs_list').includes('belongs to the filter on your computer alone and has no tool here')); // -- ClaudeCode 2026-11-13 (filter wording)
+// -- ClaudeCode 2026-11-13 (filter wording): person-facing descriptions carry no sort/sorter/runner/judged words outside route paths.
+{
+  const filterDescs = ['lsp_spaces_sorting_start', 'lsp_spaces_sorting_stop', 'lsp_spaces_runs_list', 'lsp_spaces_runs_compare'].map(desc).join(' ').replace(/\/v1\/[a-z/]+/g, '').replace(/\bsorting(?=[:}])/g, ''); // route paths and the returned `sorting` key are identifiers
+  assert('filter descriptions say filtering, never sort/sorting/sorter/runner/judged', /filtering/.test(filterDescs) && !/\bsort(ing|er|ed)?\b|runner|judged/i.test(filterDescs));
+  assert('sorting_start/stop quote the ask-owner line in filter words', ['lsp_spaces_sorting_start', 'lsp_spaces_sorting_stop'].every((n) => desc(n).includes('Ask the account owner to start or stop filtering.')));
+}
 assert('no tool for /v1/sort/* or /v1/runs/start|finish', !spaces.tools.some((t) => /sort_batch|sort_judged|runs_start|runs_finish/.test(t.name))
   && !calls.some((c) => /\/v1\/sort\/|\/v1\/runs\/start|\/v1\/runs\/[^/]+\/finish/.test(c.url)));
 const sorterDescs = ['lsp_spaces_sorting_start', 'lsp_spaces_sorting_stop', 'lsp_spaces_runs_list', 'lsp_spaces_runs_compare'].map(desc).join(' ');
