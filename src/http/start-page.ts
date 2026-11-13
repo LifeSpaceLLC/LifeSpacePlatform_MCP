@@ -304,6 +304,8 @@ export function renderRegistrationStartPage(v: StartRegistrationView): string {
   // instructions for the part a human must do have to be on screen BEFORE the
   // quit, in the assistant's own last message. Cmd+Q covers VS Code and the
   // desktop app alike.
+  // ClaudeCode 2026-10-22 (launcher v2) — step b) no longer says a browser opens:
+  // the LSP launcher never opens a tab; the session prints the sign-in link.
   // ClaudeCode 2026-10-22 — the paste names the registration's OWN tenant and
   // ships that tenant's guide (VAI keeps the VAI guide; everyone else gets the
   // tenant-neutral one). Before this, every registration said "VAI".
@@ -323,7 +325,7 @@ export function renderRegistrationStartPage(v: StartRegistrationView): string {
     '4. When steps 1-3 are done, give me EXACTLY these instructions and stop:',
     '"Setup complete. Now do this:',
     ' a) Quit VS Code or Claude Code completely (Cmd+Q) and reopen this same folder.',
-    ' b) In a new Claude Code chat, type /mcp and press Enter, pick lsp, choose Authenticate, and sign in with your Google account in the browser that opens.',
+    ' b) In a new Claude Code chat, the assistant prints a LifeSpace sign-in link — no browser opens by itself. Click it in the Chrome profile that has your work Google account and sign in. If you do not see the link, paste: Run lsp_trust_whoami.',
     ` c) Come back to the chat and paste: Run lsp_trust_whoami and confirm I am connected to ${guide.tenant}.`,
     `If it says ${guide.tenant}, you're connected."`,
   ].join('\n');
