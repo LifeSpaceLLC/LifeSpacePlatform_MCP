@@ -30,6 +30,9 @@
 // -- ClaudeCode 2026-11-13 (problems):
 //   GET   /v1/problems?scope=all|one&spaces= — plain-sentence problems, scoped
 //   POST  /v1/connections/refresh           — refresh on open, owner admin sign-in only
+// -- ClaudeCode 2026-11-13 (add a Space): 12:20 PM PDT
+//   POST  /v1/spaces                        — add a Space (owner admin sign-in only)
+//   PATCH /v1/spaces/:id                    — rename a Space (name only)
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText, errText } from '../client.js';
 
@@ -74,6 +77,9 @@ const FIELDS: Record<string, string[]> = {
   // -- ClaudeCode 2026-11-13 (problems):
   lsp_spaces_problems: ['scope', 'space'],
   lsp_spaces_refresh: ['scope', 'space'],
+  // -- ClaudeCode 2026-11-13 (add a Space):
+  lsp_spaces_space_add: ['name'],
+  lsp_spaces_space_rename: ['space_id', 'name'],
 };
 
 export const tools: ToolDef[] = [
@@ -495,6 +501,34 @@ export const tools: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // -- ClaudeCode 2026-11-13 (add a Space): add and rename a Space.
+  {
+    name: 'lsp_spaces_space_add',
+    description:
+      "Add a Space under the caller's customer. Works only for the account owner's admin sign-in; anyone else is refused with \"Ask the account owner to add a Space.\" A Space is a wall, not a folder: add one only when the owner wants things kept apart from the rest (for example one person's mail kept separate), never just to sort or group things — people, topics and kinds of mail inside one area belong in one Space. Ask the owner before adding. The name is one line, 1 to 80 characters. Returns the new Space as it shows in the list: {id, name, picture, counts:{connections, placed}}. There is no tool to delete a Space; never try to remove one.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The Space name: one line, 1 to 80 characters.' },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_space_rename',
+    description:
+      "Rename one Space of the caller's customer (the name only; nothing else about the Space changes). Works only for the account owner's admin sign-in; anyone else is refused with \"Ask the account owner to add a Space.\" A Space of another customer is not found. The name is one line, 1 to 80 characters. Returns {id, name}. A Space is a wall, not a folder; never delete one.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_id: { type: 'string', description: 'The Space tenant uuid.' },
+        name: { type: 'string', description: 'The new name: one line, 1 to 80 characters.' },
+      },
+      required: ['space_id', 'name'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Args = Record<string, unknown>;
@@ -605,4 +639,9 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', `/v1/problems${qs({ scope: a.scope, spaces: a.space })}`, 'GET')),
   lsp_spaces_refresh: handler('lsp_spaces_refresh', [], (a) =>
     call('spaces', '/v1/connections/refresh', 'POST', { scope: a.scope, ...(typeof a.space === 'string' && a.space ? { spaces: [a.space] } : {}) })),
+  // -- ClaudeCode 2026-11-13 (add a Space):
+  lsp_spaces_space_add: handler('lsp_spaces_space_add', [], (a) =>
+    call('spaces', '/v1/spaces', 'POST', body(a, ['name']))),
+  lsp_spaces_space_rename: handler('lsp_spaces_space_rename', ['space_id'], (a) =>
+    call('spaces', `/v1/spaces/${enc(a.space_id)}`, 'PATCH', body(a, ['name']))),
 };
