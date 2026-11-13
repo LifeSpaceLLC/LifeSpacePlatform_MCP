@@ -246,6 +246,17 @@ assert('sorter descriptions name no mailbox and give no example', !/mailbox/i.te
     !none.isError && noneBody?.filter === null && noneBody?.lists_fingerprint === fp
       && noneBody?.message === 'This Space has no filter for this connection yet.' && noneBody?.space_tenant_id === S && noneBody?.connection_id === C);
 
+  // -- ClaudeCode 2026-11-13 (lists truth): the 404 that carries the Space's current lists passes them through.
+  const cur = { sender_domains: ['zz-fixture.example'], sender_addresses: [], sender_domain_blacklist: [], sender_address_blacklist: [] };
+  queued.push({ status: 404, body: { error: 'This Space has no filter for this connection yet.', lists_fingerprint: fp, file: cur, version: null } });
+  const noneLists = await spaces.handlers.lsp_spaces_filter_get({ space_tenant_id: S, connection_id: C });
+  const nlBody = noneLists.isError ? null : JSON.parse(noneLists.content[0].text);
+  assert('filter_get: the "no filter yet" answer carries the Space\'s current lists when Spaces sends them',
+    !noneLists.isError && nlBody?.filter === null && JSON.stringify(nlBody?.lists) === JSON.stringify(cur) && nlBody?.lists_fingerprint === fp);
+  assert('filter_get: no lists key when Spaces sends none', noneBody !== null && !('lists' in noneBody));
+  assert('filter_put description: send only the lists you mean to change',
+    spaces.tools.find((t: { name: string }) => t.name === 'lsp_spaces_filter_put')!.description.includes('send only the sender lists you mean to change'));
+
   queued.push({ status: 404, body: { error: 'Connection not found: x' } });
   let notFound = '';
   try { await spaces.handlers.lsp_spaces_filter_get({ space_tenant_id: S, connection_id: C }); } catch (e) { notFound = String(e); }
