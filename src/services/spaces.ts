@@ -176,14 +176,14 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_placements_list',
     description:
-      "Read where items were placed. Every question has a scope. Pass `scope` = `all`, `one` or `some` and the Space ids. The service returns only what the caller may see in that scope; never widen a scope to be helpful. Returns {scope, spaces_drawn_from, includes_held, count, placements, next_before}; each placement says which connection it came from and when it was placed. Newest first, 50 per page by default.",
+      "Read where items were placed. Every question has a scope. Pass `scope` = `all`, `one` or `some` and the Space ids. The service returns only what the caller may see in that scope; never widen a scope to be helpful. Each placement says which connection it came from and when it was placed. THE ANSWER IS ONE PAGE, NOT THE WHOLE LOG: newest first, 50 rows by default (limit 1 to 200). Returns {scope, spaces_drawn_from, includes_held, count, total, has_more, next_before, placements}: `count` = rows on this page, `total` = rows in the caller's scope, `has_more` = older rows exist. To get the rest, call again with `before` = the `next_before` you were given, unchanged, until `has_more` is false. Never report a page as the full list: say how many of `total` you read.",
     inputSchema: {
       type: 'object',
       properties: {
         scope: { type: 'string', enum: ['all', 'one', 'some'] },
         spaces: { ...UUIDS, description: 'Space tenant uuids for scope one/some.' },
         since: { type: 'string', description: 'Optional ISO time: only items placed at or after it.' },
-        before: { type: 'string', description: 'Optional ISO time cursor: pass the previous next_before to get the next page.' },
+        before: { type: 'string', description: 'Optional paging cursor: pass the previous answer\'s next_before, unchanged, to get the next (older) page. A plain ISO time also works: only items placed before it.' },
         limit: { type: 'number', description: 'Optional page size, 1 to 200 (default 50). Newest first.' },
       },
       required: ['scope'],
@@ -356,7 +356,7 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_overview',
     description:
-      "The Spaces dashboard in one read: a short written read, counts, the connections with their plain status, items waiting for an answer, and where recent items went. Every question has a scope. Pass `scope` = `all` for the rollup or `one` with one Space id. The service returns only what the caller may see in that scope; never widen a scope to be helpful.",
+      "The Spaces dashboard in one read: a short written read, counts, the connections with their plain status, items waiting for an answer, and where recent items went. Its `placements` list is only the newest page: `placements_page` {count, total, has_more, next_before} says how much more exists; read the rest with lsp_spaces_placements_list. Every question has a scope. Pass `scope` = `all` for the rollup or `one` with one Space id. The service returns only what the caller may see in that scope; never widen a scope to be helpful.",
     inputSchema: {
       type: 'object',
       properties: {
