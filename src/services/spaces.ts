@@ -601,10 +601,11 @@ export const tools: ToolDef[] = [
   },
   // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): start / stop sorting and the run log.
   // /v1/sort/batch, /v1/sort/judged and /v1/runs/start|finish have NO tool: they are the runner's alone.
+  // -- ClaudeCode 2026-11-13 (filter wording): descriptions say filtering / the filter; tool names unchanged.
   {
     name: 'lsp_spaces_sorting_start',
     description:
-      "Start sorting one connection. This is the account owner's own action, under their own sign-in; anyone else is refused with \"Ask the account owner to start or stop sorting.\" and nothing is sent on. Start begins reading new mail only from that moment (forward only, nothing earlier is read), and only when a Space wants the connection: a connection no Space is set to get anything from, or one that is not connected yet, is refused. Under the default cache setting, sender, subject and why an item was placed are not kept in the cloud. Returns {connection_id, sorting:{state, started_at, last_run_at, last_run_status}, check_interval_minutes, cache}.",
+      "Start filtering one connection. This is the account owner's own action, under their own sign-in; anyone else is refused with \"Ask the account owner to start or stop filtering.\" and nothing is sent on. Start begins reading new mail only from that moment (forward only, nothing earlier is read), and only when a Space wants the connection: a connection no Space is set to get anything from, or one that is not connected yet, is refused. Under the default cache setting, sender, subject and why an item was placed are not kept in the cloud. Returns {connection_id, sorting:{state, started_at, last_run_at, last_run_status}, check_interval_minutes, cache}.",
     inputSchema: {
       type: 'object',
       properties: { connection_id: { type: 'string', description: 'Connection uuid.' } },
@@ -615,7 +616,7 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_sorting_stop',
     description:
-      "Stop sorting one connection: stop turns reading off. This is the account owner's own action, under their own sign-in; anyone else is refused with \"Ask the account owner to start or stop sorting.\" and nothing is sent on. Returns {connection_id, sorting}.",
+      "Stop filtering one connection: stop turns reading off. This is the account owner's own action, under their own sign-in; anyone else is refused with \"Ask the account owner to start or stop filtering.\" and nothing is sent on. Returns {connection_id, sorting}.",
     inputSchema: {
       type: 'object',
       properties: { connection_id: { type: 'string', description: 'Connection uuid.' } },
@@ -626,7 +627,7 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_runs_list',
     description:
-      "The run log of one connection, newest first. A run lists counts only (how many items went each way), never the items themselves. The account owner sees every run; a seat on a Space that may use the connection sees the same counts. Under the default cache setting, sender, subject and why an item was placed are not kept in the cloud. Returns {connection_id, count, runs:[{id, mode, status, started_at, finished_at, counts, observed?, note?}]} (observed and note for the owner only). limit 1 to 100, default 20. Running a sort (sort batch, sort judged, run start and finish) is the runner's alone and has no tool here; never try to do it.",
+      "The run log of one connection, newest first. A run lists counts only (how many items went each way), never the items themselves. The account owner sees every run; a seat on a Space that may use the connection sees the same counts. Under the default cache setting, sender, subject and why an item was placed are not kept in the cloud. Returns {connection_id, count, runs:[{id, mode, status, started_at, finished_at, counts, observed?, note?}]} (observed and note for the owner only). limit 1 to 100, default 20. Running the filter (the /v1/sort/batch, /v1/sort/judged and /v1/runs start and finish routes) belongs to the filter on your computer alone and has no tool here; never try to do it.", // -- ClaudeCode 2026-11-13 (filter wording)
     inputSchema: {
       type: 'object',
       properties: {
