@@ -13,8 +13,11 @@ process.env.LSP_SPACES_ADMIN_API_KEY = 'offline-check-placeholder';
 
 type Rec = { method: string; url: string; body?: unknown; auth?: string };
 const calls: Rec[] = [];
+const queued: Array<{ status: number; body: unknown }> = []; // -- ClaudeCode 2026-11-13 (filter tools)
 globalThis.fetch = (async (url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
   calls.push({ method: init?.method ?? 'GET', url: String(url), body: init?.body ? JSON.parse(init.body) : undefined, auth: init?.headers?.Authorization });
+  const next = queued.shift(); // -- ClaudeCode 2026-11-13 (filter tools): one stubbed answer, when queued
+  if (next) return new Response(JSON.stringify(next.body), { status: next.status });
   return new Response(JSON.stringify({ ok: true }), { status: 200 });
 }) as typeof fetch;
 
@@ -37,7 +40,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 39 lsp_spaces_* tools', spacesTools.length === 39, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
+assert('spaces module exposes 42 lsp_spaces_* tools', spacesTools.length === 42, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (filter tools): +filter_get/put/versions (was 39) // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
     t.name.startsWith('lsp_spaces_') && t.description.length > 20
@@ -132,6 +135,14 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   ['lsp_spaces_runs_list', { connection_id: C }, 'GET', `/v1/runs?connection_id=${C}`, undefined],
   ['lsp_spaces_runs_list', { connection_id: C, limit: 5 }, 'GET', `/v1/runs?connection_id=${C}&limit=5`, undefined],
   ['lsp_spaces_runs_compare', { run_id: ID, other_run_id: S }, 'GET', `/v1/runs/${ID}/compare/${S}`, undefined],
+  // -- ClaudeCode 2026-11-13 (filter tools):
+  ['lsp_spaces_filter_get', { space_tenant_id: S, connection_id: C }, 'GET', `/v1/spaces/${S}/connections/${C}/filter`, undefined],
+  ['lsp_spaces_filter_get', { space_tenant_id: S, connection_id: C, version: 2 }, 'GET', `/v1/spaces/${S}/connections/${C}/filter/versions/2`, undefined],
+  ['lsp_spaces_filter_versions', { space_tenant_id: S, connection_id: C }, 'GET', `/v1/spaces/${S}/connections/${C}/filter/versions`, undefined],
+  ['lsp_spaces_filter_put', { space_tenant_id: S, connection_id: C, file: { keywords: ['ZZ-FIXTURE word'], sender_domains: [] }, base_version: 3, lists_fingerprint: 'ZZ-FIXTURE-fp' },
+    'PUT', `/v1/spaces/${S}/connections/${C}/filter`, { file: { keywords: ['ZZ-FIXTURE word'], sender_domains: [] }, base_version: 3, lists_fingerprint: 'ZZ-FIXTURE-fp' }],
+  ['lsp_spaces_filter_put', { space_tenant_id: S, connection_id: C, file: { keywords: ['ZZ-FIXTURE word'] } },
+    'PUT', `/v1/spaces/${S}/connections/${C}/filter`, { file: { keywords: ['ZZ-FIXTURE word'] } }],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -219,6 +230,66 @@ assert('no tool for /v1/sort/* or /v1/runs/start|finish', !spaces.tools.some((t)
   && !calls.some((c) => /\/v1\/sort\/|\/v1\/runs\/start|\/v1\/runs\/[^/]+\/finish/.test(c.url)));
 const sorterDescs = ['lsp_spaces_sorting_start', 'lsp_spaces_sorting_stop', 'lsp_spaces_runs_list', 'lsp_spaces_runs_compare'].map(desc).join(' ');
 assert('sorter descriptions name no mailbox and give no example', !/mailbox/i.test(sorterDescs) && !/for example|e\.g\./i.test(sorterDescs));
+// -- ClaudeCode 2026-11-13 (filter tools): the answers as Spaces gives them, the
+// "no filter yet" 404, a 409 passed through with no retry, and the filter words.
+{
+  const fp = 'a'.repeat(64);
+  const shown = { space_tenant_id: S, connection_id: C, version: 2, lists_fingerprint: fp, updated_by: 'ZZ-FIXTURE', updated_at: '2026-11-13T00:00:00Z', file: { version: 2, keywords: ['ZZ-FIXTURE'], gmail_query: 'ZZ-FIXTURE' } };
+  queued.push({ status: 200, body: shown });
+  const got = await spaces.handlers.lsp_spaces_filter_get({ space_tenant_id: S, connection_id: C });
+  assert('filter_get returns Spaces\' answer as is (with the built gmail_query)', !got.isError && JSON.stringify(JSON.parse(got.content[0].text)) === JSON.stringify(shown));
+
+  queued.push({ status: 404, body: { error: 'This Space has no filter for this connection yet.', lists_fingerprint: fp } });
+  const none = await spaces.handlers.lsp_spaces_filter_get({ space_tenant_id: S, connection_id: C });
+  const noneBody = none.isError ? null : JSON.parse(none.content[0].text);
+  assert('filter_get: the 404 before any filter is a plain "no filter yet" answer with lists_fingerprint',
+    !none.isError && noneBody?.filter === null && noneBody?.lists_fingerprint === fp
+      && noneBody?.message === 'This Space has no filter for this connection yet.' && noneBody?.space_tenant_id === S && noneBody?.connection_id === C);
+
+  queued.push({ status: 404, body: { error: 'Connection not found: x' } });
+  let notFound = '';
+  try { await spaces.handlers.lsp_spaces_filter_get({ space_tenant_id: S, connection_id: C }); } catch (e) { notFound = String(e); }
+  assert('filter_get: any other 404 stays an error', notFound.includes('404') && notFound.includes('Connection not found'));
+
+  queued.push({ status: 404, body: { error: 'This filter has no version 9.' } });
+  let noVersion = '';
+  try { await spaces.handlers.lsp_spaces_filter_get({ space_tenant_id: S, connection_id: C, version: 9 }); } catch (e) { noVersion = String(e); }
+  assert('filter_get with version: a 404 stays an error', noVersion.includes('404') && noVersion.includes('no version 9'));
+
+  const n0 = calls.length;
+  queued.push({ status: 409, body: { error: 'This filter changed since you opened it.' } });
+  let stale = '';
+  try { await spaces.handlers.lsp_spaces_filter_put({ space_tenant_id: S, connection_id: C, file: { keywords: [] }, base_version: 1 }); } catch (e) { stale = String(e); }
+  assert('filter_put: a 409 is passed through, one request, no retry', stale.includes('409') && stale.includes('This filter changed since you opened it.') && calls.length === n0 + 1);
+  queued.push({ status: 409, body: { error: 'The sender lists for this Space changed since you opened them.' } });
+  let listsStale = '';
+  try { await spaces.handlers.lsp_spaces_filter_put({ space_tenant_id: S, connection_id: C, file: { sender_domains: [] }, base_version: 1, lists_fingerprint: fp }); } catch (e) { listsStale = String(e); }
+  assert('filter_put: the lists\' 409 is passed through, no retry', listsStale.includes('409') && listsStale.includes('sender lists') && calls.length === n0 + 2);
+
+  const n1 = calls.length;
+  const extra = await spaces.handlers.lsp_spaces_filter_put({ space_tenant_id: S, connection_id: C, file: {}, gmail_query: 'x' });
+  const noConn = await spaces.handlers.lsp_spaces_filter_versions({ space_tenant_id: S });
+  assert('filter tools refuse an unknown property and a missing path id without a request', !!extra.isError && !!noConn.isError && calls.length === n1);
+
+  const fd = ['lsp_spaces_filter_get', 'lsp_spaces_filter_put', 'lsp_spaces_filter_versions'].map(desc).join(' ');
+  assert('filter descriptions carry no sort/sorter/runner/judged words', !/\bsort(ing|er|ed|s)?\b|runner|judged|noise list/i.test(fd));
+  for (const part of ['keywords', 'keywords_skip_categories', 'sender_domains', 'sender_addresses', 'sender_domain_blacklist', 'sender_address_blacklist', 'priority_vs_noise', 'learn']) {
+    assert(`filter_get and filter_put name the part ${part}`, ['lsp_spaces_filter_get', 'lsp_spaces_filter_put'].every((n) => desc(n).includes(part)));
+  }
+  const pd = desc('lsp_spaces_filter_put');
+  for (const line of [
+    'The server builds the Gmail search (gmail_query) from the file and ignores one sent in.',
+    'A list left out is unchanged, and an explicit [] clears it.',
+    'The four sender lists are shared by every connection of the Space',
+    'When sending any list, pass the lists_fingerprint from the last get.',
+    'Pass base_version (the version you read) once a filter exists',
+    'A 409 means it changed: get it again and redo the change.',
+    'does not retry by itself',
+    "The account owner's own Claude session writes this file from the Space's look-for text",
+    'no paid AI is called',
+  ]) assert(`filter_put says: ${line}`, pd.includes(line));
+  assert('filter descriptions give no example and name no mailbox', !/for example|e\.g\.|mailbox/i.test(fd));
+}
 const covered = new Set(cases.map((c) => c[0]));
 assert('every tool has a route case', spaces.tools.every((t) => covered.has(t.name)));
 
