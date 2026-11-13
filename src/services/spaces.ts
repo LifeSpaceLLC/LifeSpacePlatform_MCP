@@ -15,6 +15,18 @@
 //   GET   /v1/sender-rules?tenantId=&spaceTenantId= · POST · PATCH /:id
 //   GET   /v1/world?tenantId= · POST · PATCH /:id
 //   GET   /v1/holds?tenantId= · POST · POST /:id/answer
+// -- ClaudeCode 2026-11-12 (dashboard parity): every action the Spaces dashboard
+// offers has a tool here on the SAME route, with the same refusals:
+//   GET   /v1/me                            — who am I, my Spaces
+//   GET   /v1/overview?scope=all|one&spaces= — the dashboard's right side, scoped
+//   GET   /v1/connections/:id/spaces        — who is allowed / blocked / not listed
+//   PUT   /v1/spaces/:space/connections/:conn/wants — what that Space should get
+//   POST  /v1/connections/connect           — new mailbox connection + sign-in address
+//   POST  /v1/connections/:id/connect/start — sign-in address for an existing one
+//   POST  /v1/connections/:id/connect/finish — refresh and return its card
+//   GET   /v1/connections/:id/status        — connected or not (no outside call)
+//   PUT   /v1/reads                         — save the written read for a scope
+//   GET   /v1/placements gains since / before / limit
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText, errText } from '../client.js';
 
@@ -32,7 +44,7 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_connection_update: ['id', 'tenant_id', 'label', 'access', 'status'],
   lsp_spaces_space_connections: ['space_tenant_id'],
   lsp_spaces_allow_set: ['space_tenant_id', 'connection_id', 'mode'],
-  lsp_spaces_placements_list: ['scope', 'spaces'],
+  lsp_spaces_placements_list: ['scope', 'spaces', 'since', 'before', 'limit'],
   lsp_spaces_placement_add: [
     'tenant_id', 'connection_id', 'item_id', 'sender', 'subject', 'reason',
     'item_date', 'space_tenant_ids', 'step', 'run_id', 'detail_expires_at',
@@ -46,13 +58,23 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_holds_list: ['tenant_id'],
   lsp_spaces_holds_add: ['tenant_id', 'placement_id', 'question'],
   lsp_spaces_holds_answer: ['id', 'answer'],
+  // -- ClaudeCode 2026-11-12 (dashboard parity):
+  lsp_spaces_me: [],
+  lsp_spaces_overview: ['scope', 'space'],
+  lsp_spaces_connection_spaces: ['connection_id'],
+  lsp_spaces_connection_wants_set: ['space_tenant_id', 'connection_id', 'text'],
+  lsp_spaces_connect: ['tenant_id', 'label', 'return_to'],
+  lsp_spaces_connect_start: ['connection_id', 'return_to'],
+  lsp_spaces_connect_finish: ['connection_id'],
+  lsp_spaces_connect_status: ['connection_id'],
+  lsp_spaces_read_put: ['tenant_id', 'scope', 'text', 'run_id'],
 };
 
 export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_settings_get',
     description:
-      "Read Spaces settings for a tenant (the customer's top tenant or one Space). Returns every setting row {key, value, version}, or one row when key is given. Customer-level settings live on the top tenant; Space-level ones on the Space.",
+      "Read Spaces settings for a tenant (the customer's top tenant or one Space). The key appearance holds a Space's picture. Returns every setting row {key, value, version}, or one row when key is given. Customer-level settings live on the top tenant; Space-level ones on the Space.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -154,12 +176,15 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_placements_list',
     description:
-      "Read where items were placed. Every question has a scope. Pass `scope` = `all`, `one` or `some` and the Space ids. The service returns only what the caller may see in that scope; never widen a scope to be helpful. Returns {scope, spaces_drawn_from, includes_held, count, placements}.",
+      "Read where items were placed. Every question has a scope. Pass `scope` = `all`, `one` or `some` and the Space ids. The service returns only what the caller may see in that scope; never widen a scope to be helpful. Returns {scope, spaces_drawn_from, includes_held, count, placements, next_before}; each placement says which connection it came from and when it was placed. Newest first, 50 per page by default.",
     inputSchema: {
       type: 'object',
       properties: {
         scope: { type: 'string', enum: ['all', 'one', 'some'] },
         spaces: { ...UUIDS, description: 'Space tenant uuids for scope one/some.' },
+        since: { type: 'string', description: 'Optional ISO time: only items placed at or after it.' },
+        before: { type: 'string', description: 'Optional ISO time cursor: pass the previous next_before to get the next page.' },
+        limit: { type: 'number', description: 'Optional page size, 1 to 200 (default 50). Newest first.' },
       },
       required: ['scope'],
       additionalProperties: false,
@@ -320,6 +345,121 @@ export const tools: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // -- ClaudeCode 2026-11-12 (dashboard parity): the tools below do what the
+  // Spaces dashboard does, through the same routes.
+  {
+    name: 'lsp_spaces_me',
+    description:
+      "Who am I in Spaces. Returns {kind: customer | space | none, customer, is_customer, spaces:[{id, name, picture, counts:{connections, placed}}], can:{connect}}. The customer sees all its Spaces; a seat on one Space sees that Space only. Start here to get the Space ids and names.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'lsp_spaces_overview',
+    description:
+      "The Spaces dashboard in one read: a short written read, counts, the connections with their plain status, items waiting for an answer, and where recent items went. Every question has a scope. Pass `scope` = `all` for the rollup or `one` with one Space id. The service returns only what the caller may see in that scope; never widen a scope to be helpful.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', enum: ['all', 'one'] },
+        space: { type: 'string', description: 'The one Space tenant uuid, for scope one.' },
+      },
+      required: ['scope'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_connection_spaces',
+    description:
+      "For one connection: each Space as allowed, blocked or not_listed, with the text saying what that Space should get from it. The customer sees every Space; a seat on a Space sees only its own row. Returns {connection_id, level: shared | this_space_only, spaces:[{id, name, state, wants}]}.",
+    inputSchema: {
+      type: 'object',
+      properties: { connection_id: { type: 'string', description: 'Connection uuid.' } },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_connection_wants_set',
+    description:
+      "Write, in plain words, what one Space should get from one connection (for example \"ZZ-FIXTURE school notices and anything from the coach\"). The customer may write it for any of its Spaces; a seat on a Space for its own Space only. It never allows anything: a blocked Space stays blocked. An empty text removes it. Returns {space_tenant_id, connection_id, wants, updated_at}.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        connection_id: { type: 'string', description: 'Connection uuid (shared, or that Space\'s own).' },
+        text: { type: 'string', description: 'Plain words, at most 2000 characters. Empty to remove.' },
+      },
+      required: ['space_tenant_id', 'connection_id', 'text'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_connect',
+    description:
+      "Connect a new mailbox. tenant_id = the customer's top tenant makes it shared; a Space's id makes it that Space only. Returns {connection, sign_in_url}. The person must open sign_in_url themselves and sign in at Google: give them the address; never open a browser. Afterwards call lsp_spaces_connect_finish. Only an admin sign-in that is the customer may connect; anyone else is refused.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tenant_id: { type: 'string', description: 'Top tenant uuid (shared) or a Space uuid (that Space only).' },
+        label: { type: 'string', description: 'Optional plain name for the card, e.g. "ZZ-FIXTURE family mail".' },
+        return_to: { type: 'string', description: 'Optional page the person lands on after signing in; must be a Spaces dashboard address.' },
+      },
+      required: ['tenant_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_connect_start',
+    description:
+      "Get the sign-in address for a connection that already exists but is not connected yet. Creates nothing. Returns {connection_id, sign_in_url}. The person must open it themselves; never open a browser. Afterwards call lsp_spaces_connect_finish. Only an admin sign-in that is the customer may connect.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+        return_to: { type: 'string', description: 'Optional page the person lands on after signing in; must be a Spaces dashboard address.' },
+      },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_connect_finish',
+    description:
+      "After the person has signed in at Google: check the connection and save its status. Returns the connection's card {connected, address, last_mail_at, …}. If connected is still false the sign-in did not complete. Only an admin sign-in that is the customer may call this.",
+    inputSchema: {
+      type: 'object',
+      properties: { connection_id: { type: 'string', description: 'Connection uuid.' } },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_connect_status',
+    description:
+      "Is this connection connected? Returns {connection_id, status, connected, address, last_mail_at, last_checked_at, refreshed_at} as last saved. Visible to the customer and to a Space that may use the connection.",
+    inputSchema: {
+      type: 'object',
+      properties: { connection_id: { type: 'string', description: 'Connection uuid.' } },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_read_put',
+    description:
+      "Save the short written read the dashboard shows for one scope: scope = all for the rollup, or one Space id. Only the customer (the top tenant) may save a read; a seat on a Space is refused. Write it only from items in that scope. Returns {scope, written_at}.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tenant_id: { type: 'string', description: 'Top tenant uuid.' },
+        scope: { type: 'string', description: '"all" or one Space tenant uuid of this customer.' },
+        text: { type: 'string', description: 'Two to four plain sentences, at most 1500 characters.' },
+        run_id: { type: 'string', description: 'Optional run uuid.' },
+      },
+      required: ['tenant_id', 'scope', 'text'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Args = Record<string, unknown>;
@@ -383,6 +523,9 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', `/v1/placements${qs({
       scope: a.scope,
       spaces: Array.isArray(a.spaces) ? a.spaces.join(',') : a.spaces,
+      since: a.since,
+      before: a.before,
+      limit: typeof a.limit === 'number' ? String(a.limit) : a.limit,
     })}`, 'GET')),
   lsp_spaces_placement_add: handler('lsp_spaces_placement_add', [], (a) =>
     call('spaces', '/v1/placements', 'POST', body(a, FIELDS.lsp_spaces_placement_add))),
@@ -404,4 +547,22 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', '/v1/holds', 'POST', body(a, FIELDS.lsp_spaces_holds_add))),
   lsp_spaces_holds_answer: handler('lsp_spaces_holds_answer', ['id'], (a) =>
     call('spaces', `/v1/holds/${enc(a.id)}/answer`, 'POST', body(a, ['answer']))),
+  // -- ClaudeCode 2026-11-12 (dashboard parity):
+  lsp_spaces_me: handler('lsp_spaces_me', [], () => call('spaces', '/v1/me', 'GET')),
+  lsp_spaces_overview: handler('lsp_spaces_overview', [], (a) =>
+    call('spaces', `/v1/overview${qs({ scope: a.scope, spaces: a.space })}`, 'GET')),
+  lsp_spaces_connection_spaces: handler('lsp_spaces_connection_spaces', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${enc(a.connection_id)}/spaces`, 'GET')),
+  lsp_spaces_connection_wants_set: handler('lsp_spaces_connection_wants_set', ['space_tenant_id', 'connection_id'], (a) =>
+    call('spaces', `/v1/spaces/${enc(a.space_tenant_id)}/connections/${enc(a.connection_id)}/wants`, 'PUT', body(a, ['text']))),
+  lsp_spaces_connect: handler('lsp_spaces_connect', ['tenant_id'], (a) =>
+    call('spaces', '/v1/connections/connect', 'POST', { ...body(a, ['tenant_id', 'label', 'return_to']), kind: 'mail' })),
+  lsp_spaces_connect_start: handler('lsp_spaces_connect_start', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${enc(a.connection_id)}/connect/start`, 'POST', body(a, ['return_to']))),
+  lsp_spaces_connect_finish: handler('lsp_spaces_connect_finish', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${enc(a.connection_id)}/connect/finish`, 'POST', {})),
+  lsp_spaces_connect_status: handler('lsp_spaces_connect_status', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${enc(a.connection_id)}/status`, 'GET')),
+  lsp_spaces_read_put: handler('lsp_spaces_read_put', ['tenant_id'], (a) =>
+    call('spaces', '/v1/reads', 'PUT', body(a, FIELDS.lsp_spaces_read_put))),
 };

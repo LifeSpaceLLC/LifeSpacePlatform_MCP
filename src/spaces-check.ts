@@ -37,7 +37,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 18 lsp_spaces_* tools', spacesTools.length === 18, String(spacesTools.length));
+assert('spaces module exposes 27 lsp_spaces_* tools', spacesTools.length === 27, String(spacesTools.length));
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
     t.name.startsWith('lsp_spaces_') && t.description.length > 20
@@ -98,6 +98,18 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   ['lsp_spaces_holds_list', { tenant_id: T }, 'GET', `/v1/holds?tenantId=${T}`, undefined],
   ['lsp_spaces_holds_add', { tenant_id: T, placement_id: ID, question: 'ZZ-FIXTURE?' }, 'POST', '/v1/holds', { tenant_id: T, placement_id: ID, question: 'ZZ-FIXTURE?' }],
   ['lsp_spaces_holds_answer', { id: ID, answer: 'ZZ-FIXTURE' }, 'POST', `/v1/holds/${ID}/answer`, { answer: 'ZZ-FIXTURE' }],
+  // -- ClaudeCode 2026-11-12 (dashboard parity):
+  ['lsp_spaces_me', {}, 'GET', '/v1/me', undefined],
+  ['lsp_spaces_overview', { scope: 'all' }, 'GET', '/v1/overview?scope=all', undefined],
+  ['lsp_spaces_overview', { scope: 'one', space: S }, 'GET', `/v1/overview?scope=one&spaces=${S}`, undefined],
+  ['lsp_spaces_connection_spaces', { connection_id: C }, 'GET', `/v1/connections/${C}/spaces`, undefined],
+  ['lsp_spaces_connection_wants_set', { space_tenant_id: S, connection_id: C, text: 'ZZ-FIXTURE notices' }, 'PUT', `/v1/spaces/${S}/connections/${C}/wants`, { text: 'ZZ-FIXTURE notices' }],
+  ['lsp_spaces_connect', { tenant_id: T, label: 'ZZ-FIXTURE mail', return_to: 'https://spaces.lifespace.com/' }, 'POST', '/v1/connections/connect', { tenant_id: T, label: 'ZZ-FIXTURE mail', return_to: 'https://spaces.lifespace.com/', kind: 'mail' }],
+  ['lsp_spaces_connect_start', { connection_id: C }, 'POST', `/v1/connections/${C}/connect/start`, {}],
+  ['lsp_spaces_connect_finish', { connection_id: C }, 'POST', `/v1/connections/${C}/connect/finish`, {}],
+  ['lsp_spaces_connect_status', { connection_id: C }, 'GET', `/v1/connections/${C}/status`, undefined],
+  ['lsp_spaces_read_put', { tenant_id: T, scope: 'all', text: 'ZZ-FIXTURE read' }, 'PUT', '/v1/reads', { tenant_id: T, scope: 'all', text: 'ZZ-FIXTURE read' }],
+  ['lsp_spaces_placements_list', { scope: 'all', since: '2026-11-01T00:00:00Z', limit: 10 }, 'GET', `/v1/placements?scope=all&since=${encodeURIComponent('2026-11-01T00:00:00Z')}&limit=10`, undefined],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -124,6 +136,13 @@ await requestContext.run({ bearer: 'caller-jwt-offline-placeholder' }, async () 
   await spaces.handlers.lsp_spaces_settings_get({ tenant_id: T });
 });
 assert('HTTP transport: the request carries the CALLER\'s bearer', calls[calls.length - 1].auth === 'Bearer caller-jwt-offline-placeholder');
+// (7) parity tools: the connect tools tell the model to hand the address to the
+// person and never open a browser; the overview tool carries the scope rule.
+for (const n of ['lsp_spaces_connect', 'lsp_spaces_connect_start']) {
+  assert(`${n} says the person opens the address and no browser is opened`, desc(n).includes('never open a browser'));
+}
+assert('overview carries the scope rule', desc('lsp_spaces_overview').includes('never widen a scope to be helpful'));
+assert('the overview tool only offers scope all or one', JSON.stringify(spaces.tools.find((t) => t.name === 'lsp_spaces_overview')!.inputSchema).includes('["all","one"]'));
 const covered = new Set(cases.map((c) => c[0]));
 assert('every tool has a route case', spaces.tools.every((t) => covered.has(t.name)));
 

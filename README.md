@@ -22,7 +22,7 @@ Stdio MCP server wrapping live LifeSpace Platform services as first-class tools 
 | Trust | `lsp_trust_whoami` | Live |
 | Handoff | `lsp_handoff_compose`, `lsp_handoff_send`, `lsp_handoff_list`, `lsp_handoff_transition` | Scaffolded (returns 503 until deployed) |
 | Skills | `lsp_skills_search`, `lsp_skills_get`, `lsp_skills_write`, `lsp_skills_publish`, `lsp_skills_list` | Live (2026-07-01) |
-| Spaces | `lsp_spaces_settings_get`, `lsp_spaces_settings_set`, `lsp_spaces_connections_list`, `lsp_spaces_connection_add`, `lsp_spaces_connection_update`, `lsp_spaces_space_connections`, `lsp_spaces_allow_set`, `lsp_spaces_placements_list`, `lsp_spaces_placement_add`, `lsp_spaces_sender_rules_list`, `lsp_spaces_sender_rules_add`, `lsp_spaces_sender_rules_update`, `lsp_spaces_world_list`, `lsp_spaces_world_add`, `lsp_spaces_world_update`, `lsp_spaces_holds_list`, `lsp_spaces_holds_add`, `lsp_spaces_holds_answer` | Live (2026-11-12) (ClaudeCode 2026-11-12) |
+| Spaces | `lsp_spaces_settings_get`, `lsp_spaces_settings_set`, `lsp_spaces_connections_list`, `lsp_spaces_connection_add`, `lsp_spaces_connection_update`, `lsp_spaces_space_connections`, `lsp_spaces_allow_set`, `lsp_spaces_placements_list`, `lsp_spaces_placement_add`, `lsp_spaces_sender_rules_list`, `lsp_spaces_sender_rules_add`, `lsp_spaces_sender_rules_update`, `lsp_spaces_world_list`, `lsp_spaces_world_add`, `lsp_spaces_world_update`, `lsp_spaces_holds_list`, `lsp_spaces_holds_add`, `lsp_spaces_holds_answer`, `lsp_spaces_me`, `lsp_spaces_overview`, `lsp_spaces_connection_spaces`, `lsp_spaces_connection_wants_set`, `lsp_spaces_connect`, `lsp_spaces_connect_start`, `lsp_spaces_connect_finish`, `lsp_spaces_connect_status`, `lsp_spaces_read_put` | Live (2026-11-12) (ClaudeCode 2026-11-12) |
 
 ## Build
 
