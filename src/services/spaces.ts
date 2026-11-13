@@ -90,7 +90,15 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_sorting_stop: ['connection_id'],
   lsp_spaces_runs_list: ['connection_id', 'limit'],
   lsp_spaces_runs_compare: ['run_id', 'other_run_id'],
+  // -- ClaudeCode 2026-11-13 (filter tools):
+  lsp_spaces_filter_get: ['space_tenant_id', 'connection_id', 'version'],
+  lsp_spaces_filter_put: ['space_tenant_id', 'connection_id', 'file', 'base_version', 'lists_fingerprint'],
+  lsp_spaces_filter_versions: ['space_tenant_id', 'connection_id'],
 };
+
+// -- ClaudeCode 2026-11-13 (filter tools): the filter file's parts, named once for the three descriptions.
+const FILTER_PARTS =
+  "The filter file is one JSON file per Space per connection, kept in the cloud and versioned. The account owner's own Claude session writes this file from the Space's look-for text; no paid AI is called. Its parts: keywords (words or phrases to look for); keywords_skip_categories (any of primary, social, promotions, updates, forums); sender_domains and sender_addresses (senders whose mail always comes here); sender_domain_blacklist and sender_address_blacklist (senders whose mail never comes here); priority_vs_noise {priority, noise} (plain notes on what matters and what does not); learn {auto_add_sender_after_hits, suggest_permanent_after_hits, correction_becomes_rule}. The four sender lists are shared by every connection of the Space.";
 
 export const tools: ToolDef[] = [
   {
@@ -652,6 +660,54 @@ export const tools: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // -- ClaudeCode 2026-11-13 (filter tools): the filter file, read and written as is.
+  //   GET /v1/spaces/:space/connections/:conn/filter[/versions[/:n]] · PUT …/filter
+  {
+    name: 'lsp_spaces_filter_get',
+    description:
+      `Read the filter file of one Space for one connection. Without version: the current filter. With version: that older version (its four sender lists are shown as they are now; lists_note says so). Returns Spaces' answer as is: {space_tenant_id, connection_id, version, lists_fingerprint, updated_by, updated_at, file}, where the file carries the gmail_query the server built from it. Before any filter exists the answer is {filter: null, message, lists_fingerprint} (no filter yet), not an error; keep that lists_fingerprint for the first write. The account owner, or a seat on that Space when the Space may use the connection, may read it. ${FILTER_PARTS}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+        version: { type: 'number', description: 'Optional: one older version number (a whole number from 1). Omit for the current filter.' },
+      },
+      required: ['space_tenant_id', 'connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_filter_put',
+    description:
+      `Write a new version of the filter file of one Space for one connection. The account owner only; a seat is refused. The file is sent as is. The server builds the Gmail search (gmail_query) from the file and ignores one sent in. A list left out is unchanged, and an explicit [] clears it. The four sender lists are shared by every connection of the Space, so changing one changes it for all of them. When sending any list, pass the lists_fingerprint from the last get. Pass base_version (the version you read) once a filter exists; leave it out only for the first write. A 409 means it changed: get it again and redo the change. This tool does not retry by itself. Returns the saved filter, as lsp_spaces_filter_get does. ${FILTER_PARTS}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+        file: { type: 'object', description: 'The filter file (JSON object) with any of its parts: keywords, keywords_skip_categories, sender_domains, sender_addresses, sender_domain_blacklist, sender_address_blacklist, priority_vs_noise, learn.' },
+        base_version: { type: 'number', description: 'The version you read. Required once a filter exists; leave out for the first write.' },
+        lists_fingerprint: { type: 'string', description: 'The lists_fingerprint from the last get. Required when the file carries any of the four sender lists.' },
+      },
+      required: ['space_tenant_id', 'connection_id', 'file'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_filter_versions',
+    description:
+      "List the versions kept of the filter file of one Space for one connection, newest first. Returns {space_tenant_id, connection_id, versions:[{version, written_by, created_at}]}. Read one with lsp_spaces_filter_get and version. The account owner, or a seat on that Space when the Space may use the connection, may read it.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+      },
+      required: ['space_tenant_id', 'connection_id'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Args = Record<string, unknown>;
@@ -786,4 +842,32 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', `/v1/runs${qs({ connection_id: a.connection_id, limit: typeof a.limit === 'number' ? String(a.limit) : a.limit })}`, 'GET')),
   lsp_spaces_runs_compare: handler('lsp_spaces_runs_compare', ['run_id', 'other_run_id'], (a) =>
     call('spaces', `/v1/runs/${enc(a.run_id)}/compare/${enc(a.other_run_id)}`, 'GET')),
+  // -- ClaudeCode 2026-11-13 (filter tools): one call each; no retry. The current GET's
+  // 404 that carries lists_fingerprint is the "no filter yet" answer, not an error.
+  lsp_spaces_filter_get: handler('lsp_spaces_filter_get', ['space_tenant_id', 'connection_id'], async (a) => {
+    const path = `${filterPath(a)}${a.version !== undefined ? `/versions/${enc(a.version)}` : ''}`;
+    try {
+      return await call('spaces', path, 'GET');
+    } catch (e) {
+      const err = e as { status?: number; body?: { error?: unknown; lists_fingerprint?: unknown } };
+      if (a.version === undefined && err.status === 404 && typeof err.body?.lists_fingerprint === 'string') {
+        return {
+          space_tenant_id: a.space_tenant_id,
+          connection_id: a.connection_id,
+          filter: null,
+          message: typeof err.body.error === 'string' ? err.body.error : 'No filter yet.',
+          lists_fingerprint: err.body.lists_fingerprint,
+        };
+      }
+      throw e;
+    }
+  }),
+  lsp_spaces_filter_put: handler('lsp_spaces_filter_put', ['space_tenant_id', 'connection_id'], (a) =>
+    call('spaces', filterPath(a), 'PUT', body(a, ['file', 'base_version', 'lists_fingerprint']))),
+  lsp_spaces_filter_versions: handler('lsp_spaces_filter_versions', ['space_tenant_id', 'connection_id'], (a) =>
+    call('spaces', `${filterPath(a)}/versions`, 'GET')),
 };
+
+function filterPath(a: Args): string {
+  return `/v1/spaces/${enc(a.space_tenant_id)}/connections/${enc(a.connection_id)}/filter`;
+}

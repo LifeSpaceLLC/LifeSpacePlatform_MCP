@@ -65,7 +65,9 @@ export async function call(
         : typeof parsed === 'string'
           ? parsed
           : text) || `HTTP ${res.status}`;
-    throw new Error(`${method} ${service}${path} → ${res.status}: ${errMsg}`);
+    // -- ClaudeCode 2026-11-13 (filter tools): the status and parsed answer ride on the
+    // error (same message as before), so a tool can read a refusal's own fields.
+    throw Object.assign(new Error(`${method} ${service}${path} → ${res.status}: ${errMsg}`), { status: res.status, body: parsed });
   }
   return parsed;
 }
