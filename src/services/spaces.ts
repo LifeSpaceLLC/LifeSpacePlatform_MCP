@@ -85,6 +85,11 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_topic_add: ['space_id', 'name', 'wants', 'connection_ids'],
   lsp_spaces_topic_update: ['topic_id', 'name', 'wants', 'connection_ids', 'position'],
   lsp_spaces_topic_remove: ['topic_id'],
+  // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter):
+  lsp_spaces_sorting_start: ['connection_id'],
+  lsp_spaces_sorting_stop: ['connection_id'],
+  lsp_spaces_runs_list: ['connection_id', 'limit'],
+  lsp_spaces_runs_compare: ['run_id', 'other_run_id'],
 };
 
 export const tools: ToolDef[] = [
@@ -594,6 +599,58 @@ export const tools: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): start / stop sorting and the run log.
+  // /v1/sort/batch, /v1/sort/judged and /v1/runs/start|finish have NO tool: they are the runner's alone.
+  {
+    name: 'lsp_spaces_sorting_start',
+    description:
+      "Start sorting one connection. This is the account owner's own action, under their own sign-in; anyone else is refused with \"Ask the account owner to start or stop sorting.\" and nothing is sent on. Start begins reading new mail only from that moment (forward only, nothing earlier is read), and only when a Space wants the connection: a connection no Space is set to get anything from, or one that is not connected yet, is refused. Under the default cache setting, sender, subject and why an item was placed are not kept in the cloud. Returns {connection_id, sorting:{state, started_at, last_run_at, last_run_status}, check_interval_minutes, cache}.",
+    inputSchema: {
+      type: 'object',
+      properties: { connection_id: { type: 'string', description: 'Connection uuid.' } },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_sorting_stop',
+    description:
+      "Stop sorting one connection: stop turns reading off. This is the account owner's own action, under their own sign-in; anyone else is refused with \"Ask the account owner to start or stop sorting.\" and nothing is sent on. Returns {connection_id, sorting}.",
+    inputSchema: {
+      type: 'object',
+      properties: { connection_id: { type: 'string', description: 'Connection uuid.' } },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_runs_list',
+    description:
+      "The run log of one connection, newest first. A run lists counts only (how many items went each way), never the items themselves. The account owner sees every run; a seat on a Space that may use the connection sees the same counts. Under the default cache setting, sender, subject and why an item was placed are not kept in the cloud. Returns {connection_id, count, runs:[{id, mode, status, started_at, finished_at, counts, observed?, note?}]} (observed and note for the owner only). limit 1 to 100, default 20. Running a sort (sort batch, sort judged, run start and finish) is the runner's alone and has no tool here; never try to do it.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+        limit: { type: 'number', description: 'Optional number of runs, 1 to 100 (default 20).' },
+      },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_runs_compare',
+    description:
+      "Compare two runs of the same connection: which items were placed differently (Spaces or topics). The account owner only. Returns {a, b, items, same, different, differences:[{item_id, a, b}]}: item ids, Spaces, topics and step only.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        run_id: { type: 'string', description: 'The first run uuid.' },
+        other_run_id: { type: 'string', description: 'The other run uuid (same connection).' },
+      },
+      required: ['run_id', 'other_run_id'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Args = Record<string, unknown>;
@@ -719,4 +776,13 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', `/v1/topics/${enc(a.topic_id)}`, 'PATCH', body(a, ['name', 'wants', 'connection_ids', 'position']))),
   lsp_spaces_topic_remove: handler('lsp_spaces_topic_remove', ['topic_id'], (a) =>
     call('spaces', `/v1/topics/${enc(a.topic_id)}`, 'DELETE')),
+  // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter):
+  lsp_spaces_sorting_start: handler('lsp_spaces_sorting_start', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${enc(a.connection_id)}/sorting/start`, 'POST', {})),
+  lsp_spaces_sorting_stop: handler('lsp_spaces_sorting_stop', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${enc(a.connection_id)}/sorting/stop`, 'POST', {})),
+  lsp_spaces_runs_list: handler('lsp_spaces_runs_list', ['connection_id'], (a) =>
+    call('spaces', `/v1/runs${qs({ connection_id: a.connection_id, limit: typeof a.limit === 'number' ? String(a.limit) : a.limit })}`, 'GET')),
+  lsp_spaces_runs_compare: handler('lsp_spaces_runs_compare', ['run_id', 'other_run_id'], (a) =>
+    call('spaces', `/v1/runs/${enc(a.run_id)}/compare/${enc(a.other_run_id)}`, 'GET')),
 };

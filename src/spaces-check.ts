@@ -37,7 +37,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 35 lsp_spaces_* tools', spacesTools.length === 35, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
+assert('spaces module exposes 39 lsp_spaces_* tools', spacesTools.length === 39, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
     t.name.startsWith('lsp_spaces_') && t.description.length > 20
@@ -126,6 +126,12 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   ['lsp_spaces_overview', { scope: 'topic', topic: ID }, 'GET', `/v1/overview?scope=topic&topic=${ID}`, undefined],
   ['lsp_spaces_problems', { scope: 'topic', topic: ID }, 'GET', `/v1/problems?scope=topic&topic=${ID}`, undefined],
   ['lsp_spaces_placements_list', { scope: 'topic', topic: ID }, 'GET', `/v1/placements?scope=topic&topic=${ID}`, undefined],
+  // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter):
+  ['lsp_spaces_sorting_start', { connection_id: C }, 'POST', `/v1/connections/${C}/sorting/start`, {}],
+  ['lsp_spaces_sorting_stop', { connection_id: C }, 'POST', `/v1/connections/${C}/sorting/stop`, {}],
+  ['lsp_spaces_runs_list', { connection_id: C }, 'GET', `/v1/runs?connection_id=${C}`, undefined],
+  ['lsp_spaces_runs_list', { connection_id: C, limit: 5 }, 'GET', `/v1/runs?connection_id=${C}&limit=5`, undefined],
+  ['lsp_spaces_runs_compare', { run_id: ID, other_run_id: S }, 'GET', `/v1/runs/${ID}/compare/${S}`, undefined],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -189,6 +195,24 @@ assert('topics_list says a topic is NOT a wall', desc('lsp_spaces_topics_list').
 assert('topic_add says use a topic, not a new Space', desc('lsp_spaces_topic_add').includes('Use a topic, not a new Space'));
 assert('topic_remove says the account owner only and items stay', desc('lsp_spaces_topic_remove').includes('account owner only') && desc('lsp_spaces_topic_remove').includes('items stay'));
 assert('topic descriptions name no mailbox', !/mailbox/i.test(['lsp_spaces_topics_list', 'lsp_spaces_topic_add', 'lsp_spaces_topic_update', 'lsp_spaces_topic_remove'].map(desc).join(' ')));
+// -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): owner's own action, forward only,
+// only when a Space wants it, stop turns reading off, the cache rule, counts only,
+// and no tool for the runner's routes.
+for (const n of ['lsp_spaces_sorting_start', 'lsp_spaces_sorting_stop']) {
+  assert(`${n} says the account owner's own action, under their own sign-in`, desc(n).includes("the account owner's own action, under their own sign-in"));
+}
+assert('sorting_start says new mail only from that moment (forward only)', desc('lsp_spaces_sorting_start').includes('new mail only from that moment (forward only'));
+assert('sorting_start says only when a Space wants the connection', desc('lsp_spaces_sorting_start').includes('only when a Space wants the connection'));
+assert('sorting_stop says stop turns reading off', desc('lsp_spaces_sorting_stop').includes('stop turns reading off'));
+for (const n of ['lsp_spaces_sorting_start', 'lsp_spaces_runs_list']) {
+  assert(`${n} carries the cache rule`, desc(n).includes('Under the default cache setting, sender, subject and why an item was placed are not kept in the cloud.'));
+}
+assert('runs_list says a run lists counts only', desc('lsp_spaces_runs_list').includes('A run lists counts only'));
+assert('runs_list says the runner\'s routes have no tool', desc('lsp_spaces_runs_list').includes("the runner's alone and has no tool here"));
+assert('no tool for /v1/sort/* or /v1/runs/start|finish', !spaces.tools.some((t) => /sort_batch|sort_judged|runs_start|runs_finish/.test(t.name))
+  && !calls.some((c) => /\/v1\/sort\/|\/v1\/runs\/start|\/v1\/runs\/[^/]+\/finish/.test(c.url)));
+const sorterDescs = ['lsp_spaces_sorting_start', 'lsp_spaces_sorting_stop', 'lsp_spaces_runs_list', 'lsp_spaces_runs_compare'].map(desc).join(' ');
+assert('sorter descriptions name no mailbox and give no example', !/mailbox/i.test(sorterDescs) && !/for example|e\.g\./i.test(sorterDescs));
 const covered = new Set(cases.map((c) => c[0]));
 assert('every tool has a route case', spaces.tools.every((t) => covered.has(t.name)));
 
