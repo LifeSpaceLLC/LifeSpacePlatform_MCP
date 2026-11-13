@@ -37,7 +37,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 31 lsp_spaces_* tools', spacesTools.length === 31, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
+assert('spaces module exposes 35 lsp_spaces_* tools', spacesTools.length === 35, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
     t.name.startsWith('lsp_spaces_') && t.description.length > 20
@@ -118,6 +118,14 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   // -- ClaudeCode 2026-11-13 (add a Space):
   ['lsp_spaces_space_add', { name: 'ZZ-FIXTURE Ari' }, 'POST', '/v1/spaces', { name: 'ZZ-FIXTURE Ari' }],
   ['lsp_spaces_space_rename', { space_id: S, name: 'ZZ-FIXTURE Home' }, 'PATCH', `/v1/spaces/${S}`, { name: 'ZZ-FIXTURE Home' }],
+  // -- ClaudeCode 2026-11-13 (topics):
+  ['lsp_spaces_topics_list', { space_id: S }, 'GET', `/v1/spaces/${S}/topics`, undefined],
+  ['lsp_spaces_topic_add', { space_id: S, name: 'ZZ-FIXTURE topic', wants: 'ZZ-FIXTURE text', connection_ids: [C] }, 'POST', `/v1/spaces/${S}/topics`, { name: 'ZZ-FIXTURE topic', wants: 'ZZ-FIXTURE text', connection_ids: [C] }],
+  ['lsp_spaces_topic_update', { topic_id: ID, wants: null, connection_ids: null }, 'PATCH', `/v1/topics/${ID}`, { wants: null, connection_ids: null }],
+  ['lsp_spaces_topic_remove', { topic_id: ID }, 'DELETE', `/v1/topics/${ID}`, undefined],
+  ['lsp_spaces_overview', { scope: 'topic', topic: ID }, 'GET', `/v1/overview?scope=topic&topic=${ID}`, undefined],
+  ['lsp_spaces_problems', { scope: 'topic', topic: ID }, 'GET', `/v1/problems?scope=topic&topic=${ID}`, undefined],
+  ['lsp_spaces_placements_list', { scope: 'topic', topic: ID }, 'GET', `/v1/placements?scope=topic&topic=${ID}`, undefined],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -150,12 +158,14 @@ for (const n of ['lsp_spaces_connect', 'lsp_spaces_connect_start']) {
   assert(`${n} says the person opens the address and no browser is opened`, desc(n).includes('never open a browser'));
 }
 assert('overview carries the scope rule', desc('lsp_spaces_overview').includes('never widen a scope to be helpful'));
-assert('the overview tool only offers scope all or one', JSON.stringify(spaces.tools.find((t) => t.name === 'lsp_spaces_overview')!.inputSchema).includes('["all","one"]'));
+assert('the overview tool offers scope all, one or topic (2026-11-13 topics)', JSON.stringify(spaces.tools.find((t) => t.name === 'lsp_spaces_overview')!.inputSchema).includes('["all","one","topic"]'));
 // -- ClaudeCode 2026-11-13 (problems): the new tools carry the scope rule, the
 // owner-only rule, and how to act; the overview names the one-Space shared list.
 for (const n of ['lsp_spaces_problems', 'lsp_spaces_refresh']) {
   assert(`${n} carries the scope rule`, desc(n).includes('never widen a scope to be helpful'));
-  assert(`${n} only offers scope all or one`, JSON.stringify(spaces.tools.find((t) => t.name === n)!.inputSchema).includes('["all","one"]'));
+  // -- ClaudeCode 2026-11-13 (topics): problems also takes scope topic; refresh stays all or one.
+  const want = n === 'lsp_spaces_problems' ? '["all","one","topic"]' : '["all","one"]';
+  assert(`${n} offers the expected scopes`, JSON.stringify(spaces.tools.find((t) => t.name === n)!.inputSchema).includes(want));
 }
 assert('problems says connecting again is a person\'s action', desc('lsp_spaces_problems').includes("a person's own action") && desc('lsp_spaces_problems').includes('lsp_spaces_connect_start'));
 assert('refresh says it works only for the account owner\'s admin sign-in', desc('lsp_spaces_refresh').includes("only for the account owner's admin sign-in"));
@@ -174,6 +184,11 @@ assert('space_add says add one only when the owner wants things kept apart', des
   const noId = await spaces.handlers.lsp_spaces_space_rename({ name: 'x' });
   assert('space_rename refuses config and a missing space_id without a request', !!extra.isError && !!noId.isError && calls.length === n0);
 }
+// -- ClaudeCode 2026-11-13 (topics): a topic is not a wall; remove is owner-only.
+assert('topics_list says a topic is NOT a wall', desc('lsp_spaces_topics_list').includes('NOT a wall'));
+assert('topic_add says use a topic, not a new Space', desc('lsp_spaces_topic_add').includes('Use a topic, not a new Space'));
+assert('topic_remove says the account owner only and items stay', desc('lsp_spaces_topic_remove').includes('account owner only') && desc('lsp_spaces_topic_remove').includes('items stay'));
+assert('topic descriptions name no mailbox', !/mailbox/i.test(['lsp_spaces_topics_list', 'lsp_spaces_topic_add', 'lsp_spaces_topic_update', 'lsp_spaces_topic_remove'].map(desc).join(' ')));
 const covered = new Set(cases.map((c) => c[0]));
 assert('every tool has a route case', spaces.tools.every((t) => covered.has(t.name)));
 
