@@ -37,7 +37,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 27 lsp_spaces_* tools', spacesTools.length === 27, String(spacesTools.length));
+assert('spaces module exposes 29 lsp_spaces_* tools', spacesTools.length === 29, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (problems): +problems, +refresh
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
     t.name.startsWith('lsp_spaces_') && t.description.length > 20
@@ -110,6 +110,11 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   ['lsp_spaces_connect_status', { connection_id: C }, 'GET', `/v1/connections/${C}/status`, undefined],
   ['lsp_spaces_read_put', { tenant_id: T, scope: 'all', text: 'ZZ-FIXTURE read' }, 'PUT', '/v1/reads', { tenant_id: T, scope: 'all', text: 'ZZ-FIXTURE read' }],
   ['lsp_spaces_placements_list', { scope: 'all', since: '2026-11-01T00:00:00Z', limit: 10 }, 'GET', `/v1/placements?scope=all&since=${encodeURIComponent('2026-11-01T00:00:00Z')}&limit=10`, undefined],
+  // -- ClaudeCode 2026-11-13 (problems):
+  ['lsp_spaces_problems', { scope: 'all' }, 'GET', '/v1/problems?scope=all', undefined],
+  ['lsp_spaces_problems', { scope: 'one', space: S }, 'GET', `/v1/problems?scope=one&spaces=${S}`, undefined],
+  ['lsp_spaces_refresh', { scope: 'all' }, 'POST', '/v1/connections/refresh', { scope: 'all' }],
+  ['lsp_spaces_refresh', { scope: 'one', space: S }, 'POST', '/v1/connections/refresh', { scope: 'one', spaces: [S] }],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -143,6 +148,16 @@ for (const n of ['lsp_spaces_connect', 'lsp_spaces_connect_start']) {
 }
 assert('overview carries the scope rule', desc('lsp_spaces_overview').includes('never widen a scope to be helpful'));
 assert('the overview tool only offers scope all or one', JSON.stringify(spaces.tools.find((t) => t.name === 'lsp_spaces_overview')!.inputSchema).includes('["all","one"]'));
+// -- ClaudeCode 2026-11-13 (problems): the new tools carry the scope rule, the
+// owner-only rule, and how to act; the overview names the one-Space shared list.
+for (const n of ['lsp_spaces_problems', 'lsp_spaces_refresh']) {
+  assert(`${n} carries the scope rule`, desc(n).includes('never widen a scope to be helpful'));
+  assert(`${n} only offers scope all or one`, JSON.stringify(spaces.tools.find((t) => t.name === n)!.inputSchema).includes('["all","one"]'));
+}
+assert('problems says connecting again is a person\'s action', desc('lsp_spaces_problems').includes("a person's own action") && desc('lsp_spaces_problems').includes('lsp_spaces_connect_start'));
+assert('refresh says it works only for the account owner\'s admin sign-in', desc('lsp_spaces_refresh').includes("only for the account owner's admin sign-in"));
+assert('overview: the customer one-Space answer lists every shared connection', desc('lsp_spaces_overview').includes('EVERY shared connection'));
+assert('problems and refresh descriptions name no mailbox', !/mailbox/i.test(desc('lsp_spaces_problems') + desc('lsp_spaces_refresh')));
 const covered = new Set(cases.map((c) => c[0]));
 assert('every tool has a route case', spaces.tools.every((t) => covered.has(t.name)));
 

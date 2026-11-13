@@ -27,6 +27,9 @@
 //   GET   /v1/connections/:id/status        — connected or not (no outside call)
 //   PUT   /v1/reads                         — save the written read for a scope
 //   GET   /v1/placements gains since / before / limit
+// -- ClaudeCode 2026-11-13 (problems):
+//   GET   /v1/problems?scope=all|one&spaces= — plain-sentence problems, scoped
+//   POST  /v1/connections/refresh           — refresh on open, owner admin sign-in only
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText, errText } from '../client.js';
 
@@ -68,6 +71,9 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_connect_finish: ['connection_id'],
   lsp_spaces_connect_status: ['connection_id'],
   lsp_spaces_read_put: ['tenant_id', 'scope', 'text', 'run_id'],
+  // -- ClaudeCode 2026-11-13 (problems):
+  lsp_spaces_problems: ['scope', 'space'],
+  lsp_spaces_refresh: ['scope', 'space'],
 };
 
 export const tools: ToolDef[] = [
@@ -356,7 +362,7 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_overview',
     description:
-      "The Spaces dashboard in one read: a short written read, counts, the connections with their plain status, items waiting for an answer, and where recent items went. Its `placements` list is only the newest page: `placements_page` {count, total, has_more, next_before} says how much more exists; read the rest with lsp_spaces_placements_list. Every question has a scope. Pass `scope` = `all` for the rollup or `one` with one Space id. The service returns only what the caller may see in that scope; never widen a scope to be helpful.",
+      "The Spaces dashboard in one read: a short written read, counts, the connections with their plain status, items waiting for an answer, and where recent items went. Its `placements` list is only the newest page: `placements_page` {count, total, has_more, next_before} says how much more exists; read the rest with lsp_spaces_placements_list. For the customer, a one-Space answer also lists EVERY shared connection with that Space's own state on it (allowed, blocked or not listed); for a seat on a Space, only the connections it may use now. Each connection carries refreshed_at and stale: a stale connection is shown as \"Not checked since <time>\", never as connected. Every question has a scope. Pass `scope` = `all` for the rollup or `one` with one Space id. The service returns only what the caller may see in that scope; never widen a scope to be helpful.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -457,6 +463,35 @@ export const tools: ToolDef[] = [
         run_id: { type: 'string', description: 'Optional run uuid.' },
       },
       required: ['tenant_id', 'scope', 'text'],
+      additionalProperties: false,
+    },
+  },
+  // -- ClaudeCode 2026-11-13 (problems): the problems view and refresh on open.
+  {
+    name: 'lsp_spaces_problems',
+    description:
+      "The customer's own problems view: what is wrong with its connections, one plain sentence each (for example \"Family stopped working. Connect it again.\"). Scoped like every other read: pass `scope` = `all` for the rollup or `one` with one Space id; the service returns only what the caller may see in that scope; never widen a scope to be helpful. Returns {scope, spaces_drawn_from, count, problems:[{key, kind: stopped | check_failed | not_checked | paused | not_connected, connection:{id, name, level}, spaces, since, text, action: connect | null}], stale_after_minutes}. Show the text as it is. To act: connecting again is a person's own action, through the Spaces screen or lsp_spaces_connect_start (the person opens the address themselves); only the account owner's admin sign-in may connect.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', enum: ['all', 'one'] },
+        space: { type: 'string', description: 'The one Space tenant uuid, for scope one.' },
+      },
+      required: ['scope'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_refresh',
+    description:
+      "Refresh the saved status of the connections in a scope, under the caller's own sign-in (Spaces holds no credential of its own). It works only for the account owner's admin sign-in; every other caller, and any connection refreshed in the last 2 minutes, is skipped with a reason, and one failure never fails the call. Pass `scope` = `all` or `one` with one Space id; never widen a scope to be helpful. Returns {refreshed:[id], skipped:[{id, reason: not_allowed | recent | not_listen}], failed:[id], refreshed_at}.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', enum: ['all', 'one'] },
+        space: { type: 'string', description: 'The one Space tenant uuid, for scope one.' },
+      },
+      required: ['scope'],
       additionalProperties: false,
     },
   },
@@ -565,4 +600,9 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', `/v1/connections/${enc(a.connection_id)}/status`, 'GET')),
   lsp_spaces_read_put: handler('lsp_spaces_read_put', ['tenant_id'], (a) =>
     call('spaces', '/v1/reads', 'PUT', body(a, FIELDS.lsp_spaces_read_put))),
+  // -- ClaudeCode 2026-11-13 (problems):
+  lsp_spaces_problems: handler('lsp_spaces_problems', [], (a) =>
+    call('spaces', `/v1/problems${qs({ scope: a.scope, spaces: a.space })}`, 'GET')),
+  lsp_spaces_refresh: handler('lsp_spaces_refresh', [], (a) =>
+    call('spaces', '/v1/connections/refresh', 'POST', { scope: a.scope, ...(typeof a.space === 'string' && a.space ? { spaces: [a.space] } : {}) })),
 };
