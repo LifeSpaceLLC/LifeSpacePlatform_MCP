@@ -113,7 +113,7 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_hold_get: ['connection_id'],
   lsp_spaces_hold_set: ['connection_id', 'hold'],
   // -- ClaudeCode 2026-11-14 (step 2 matches):
-  lsp_spaces_matches_list: ['space_tenant_id', 'limit'],
+  lsp_spaces_matches_list: ['space_tenant_id', 'limit', 'include_read'], // -- ClaudeCode 2026-11-14 (step 4 inbox): +include_read
   lsp_spaces_match_text: ['space_tenant_id', 'connection_id', 'record_id'],
   lsp_spaces_text_read_get: ['connection_id'],
   lsp_spaces_text_read_set: ['connection_id', 'text_read'],
@@ -122,6 +122,11 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_match_link_open: ['space_tenant_id', 'connection_id', 'record_id', 'url'],
   lsp_spaces_link_sensitivity_get: [],
   lsp_spaces_link_sensitivity_set: ['hosts'],
+  // -- ClaudeCode 2026-11-14 (step 4 inbox):
+  lsp_spaces_match_read: ['space_tenant_id', 'connection_id', 'record_id', 'read'],
+  lsp_spaces_match_flag: ['space_tenant_id', 'connection_id', 'record_id', 'scope'],
+  lsp_spaces_missed_add: ['space_tenant_id', 'kind', 'value'],
+  lsp_spaces_flag_undo: ['space_tenant_id', 'flag_id'],
 };
 
 // -- ClaudeCode 2026-11-13 (filter tools): the filter file's parts, named once for the three descriptions.
@@ -800,12 +805,13 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_matches_list',
     description:
-      "List the matched mail of one Space, newest first: mail its filters matched on every connection that Space may use, not yet read. Only sender, subject, date and a short snippet. The account owner or a seat on that Space; any other Space is not found. Returns {matches:[{connection_id, connection_label, record_id, from, subject, date, snippet, text_readable}], notes?}. text_readable true means the full text of that match may be read with lsp_spaces_match_text. A notes line \"One mailbox could not be read right now.\" means one mailbox failed and the rest are still listed. limit 1 to 100, default 20.",
+      "List the matched mail of one Space, newest first: mail its filters matched on every connection that Space may use. Unread only, unless include_read is true. Only sender, subject, date and a short snippet. The account owner or a seat on that Space; any other Space is not found. Returns {matches:[{connection_id, connection_label, record_id, from, subject, date, snippet, text_readable, read}], unread_count, notes?}. text_readable true means the full text of that match may be read with lsp_spaces_match_text. A notes line \"One mailbox could not be read right now.\" means one mailbox failed and the rest are still listed. limit 1 to 100, default 20.",
     inputSchema: {
       type: 'object',
       properties: {
         space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
         limit: { type: 'number', description: 'Optional number of matches, 1 to 100 (default 20).' },
+        include_read: { type: 'boolean', description: 'Optional. true = list read mail too; default unread only.' }, // -- ClaudeCode 2026-11-14 (step 4 inbox):
       },
       required: ['space_tenant_id'],
       additionalProperties: false,
@@ -899,6 +905,68 @@ export const tools: ToolDef[] = [
         hosts: { type: 'object', description: 'Site name to public or private, the whole list.', additionalProperties: { type: 'string', enum: ['public', 'private'] } },
       },
       required: ['hosts'],
+      additionalProperties: false,
+    },
+  },
+  // -- ClaudeCode 2026-11-14 (step 4 inbox): the Space inbox: read marks, flags and undo.
+  {
+    name: 'lsp_spaces_match_read',
+    description:
+      "Mark one matched mail read (read true) or unread (read false) for this Space only. The account owner only; a seat is refused. Take connection_id and record_id from lsp_spaces_matches_list. Once every Space that matched the mail has read it, the mail is cleared from the mailbox list and can no longer be marked unread. Returns {read, cleared}; cleared true means it was cleared. Refusal: \"This mail was already cleared.\"",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        connection_id: { type: 'string', description: 'Connection uuid, from the match.' },
+        record_id: { type: 'string', description: 'Record uuid, from the match.' },
+        read: { type: 'boolean', description: 'true = mark read; false = mark unread.' },
+      },
+      required: ['space_tenant_id', 'connection_id', 'record_id', 'read'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_match_flag',
+    description:
+      "Flag one matched mail as not for this Space. The account owner only; a seat is refused. The sender of that mail becomes a sender rule: mail from it never comes to this Space. scope address (the default) means this sender only; domain means everyone at the sender's domain. The mail is also marked read for this Space. Returns {flag_id, rule:{kind, value, mode}, undo:true}; lsp_spaces_flag_undo with flag_id takes it back. Refusal: \"This sender could not be read.\"",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        connection_id: { type: 'string', description: 'Connection uuid, from the match.' },
+        record_id: { type: 'string', description: 'Record uuid, from the match.' },
+        scope: { type: 'string', enum: ['address', 'domain'], description: 'Optional. address = this sender (default); domain = everyone at the sender\'s domain.' },
+      },
+      required: ['space_tenant_id', 'connection_id', 'record_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_missed_add',
+    description:
+      "Tell a Space it missed something: mail from this sender address, or from everyone at this domain, should come to this Space. The account owner only; a seat is refused. Becomes a sender rule. kind address takes a plain email address; kind domain takes a domain name; at most 254 characters, kept in lowercase. Returns {flag_id, rule:{kind, value, mode}, undo:true}; lsp_spaces_flag_undo with flag_id takes it back.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        kind: { type: 'string', enum: ['address', 'domain'], description: 'address or domain.' },
+        value: { type: 'string', description: 'The email address or the domain name.' },
+      },
+      required: ['space_tenant_id', 'kind', 'value'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_flag_undo',
+    description:
+      "Take back one flag made with lsp_spaces_match_flag or lsp_spaces_missed_add. The account owner only. The sender rule goes back to what it was before the flag, or is removed if the flag made it. A mail marked read stays read. Refusals: \"Already undone.\", \"This was changed again since; change it in the sender list.\"",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        flag_id: { type: 'string', description: 'Flag uuid, from the flag answer.' },
+      },
+      required: ['space_tenant_id', 'flag_id'],
       additionalProperties: false,
     },
   },
@@ -1137,7 +1205,7 @@ export const handlers: Record<string, ToolHandler> = {
   }),
   // -- ClaudeCode 2026-11-14 (step 2 matches): one call each, Spaces' answer as is.
   lsp_spaces_matches_list: handler('lsp_spaces_matches_list', ['space_tenant_id'], (a) =>
-    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/matches${qs({ limit: typeof a.limit === 'number' ? String(a.limit) : a.limit })}`, 'GET')),
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/matches${qs({ limit: typeof a.limit === 'number' ? String(a.limit) : a.limit, include_read: encIncludeRead(a.include_read) })}`, 'GET')),
   // -- ClaudeCode 2026-11-14 (step 3 review): the mail text comes back as quoted, untrusted data.
   lsp_spaces_match_text: quotedHandler('lsp_spaces_match_text', ['space_tenant_id', 'connection_id', 'record_id'], 'mail', (a) =>
     call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/matches/${encId('connection_id', a.connection_id)}/${encId('record_id', a.record_id)}/text`, 'GET')),
@@ -1158,7 +1226,30 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', '/v1/settings/link-sensitivity', 'GET')),
   lsp_spaces_link_sensitivity_set: handler('lsp_spaces_link_sensitivity_set', [], (a) =>
     call('spaces', '/v1/settings/link-sensitivity', 'PUT', { hosts: encHosts(a.hosts) })),
+  // -- ClaudeCode 2026-11-14 (step 4 inbox): one call each, Spaces' answer as is.
+  lsp_spaces_match_read: handler('lsp_spaces_match_read', ['space_tenant_id', 'connection_id', 'record_id'], (a) => {
+    if (typeof a.read !== 'boolean') throw new Error('read must be true or false.');
+    return call('spaces', `${matchPath(a)}/read`, a.read ? 'POST' : 'DELETE');
+  }),
+  lsp_spaces_match_flag: handler('lsp_spaces_match_flag', ['space_tenant_id', 'connection_id', 'record_id'], (a) => {
+    if (a.scope !== undefined && a.scope !== 'address' && a.scope !== 'domain') throw new Error('scope must be address or domain.');
+    return call('spaces', `${matchPath(a)}/flag`, 'POST', { flag: 'not_for_space', ...(a.scope ? { scope: a.scope } : {}) });
+  }),
+  lsp_spaces_missed_add: handler('lsp_spaces_missed_add', ['space_tenant_id'], (a) => {
+    if (a.kind !== 'address' && a.kind !== 'domain') throw new Error('kind must be address or domain.');
+    if (typeof a.value !== 'string' || !a.value.trim() || a.value.length > 254) throw new Error('value must be an address or a domain of at most 254 characters.');
+    return call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/missed`, 'POST', { kind: a.kind, value: a.value });
+  }),
+  lsp_spaces_flag_undo: handler('lsp_spaces_flag_undo', ['space_tenant_id', 'flag_id'], (a) =>
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/flags/${encId('flag_id', a.flag_id)}/undo`, 'POST', {})),
 };
+
+// -- ClaudeCode 2026-11-14 (step 4 inbox): include_read is true or false; only true is sent (false = the default).
+function encIncludeRead(v: unknown): string | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== 'boolean') throw new Error('include_read must be true or false.');
+  return v ? 'true' : undefined;
+}
 
 // -- ClaudeCode 2026-11-14 (step 3 links): input checks before any request. The service checks again.
 function matchPath(a: Args): string {

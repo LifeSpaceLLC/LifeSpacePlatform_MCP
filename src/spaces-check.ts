@@ -40,7 +40,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 54 lsp_spaces_* tools', spacesTools.length === 54, // -- ClaudeCode 2026-11-14 (step 3 links): +match_links, +match_link_open, +link_sensitivity_get/set (was 50) // -- ClaudeCode 2026-11-14 (step 2 matches): +matches_list, +match_text, +text_read_get/set (was 46)
+assert('spaces module exposes 58 lsp_spaces_* tools', spacesTools.length === 58, // -- ClaudeCode 2026-11-14 (step 4 inbox): +match_read, +match_flag, +missed_add, +flag_undo (was 54) // -- ClaudeCode 2026-11-14 (step 3 links): +match_links, +match_link_open, +link_sensitivity_get/set (was 50) // -- ClaudeCode 2026-11-14 (step 2 matches): +matches_list, +match_text, +text_read_get/set (was 46)
   String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (checks tools): +checks_list/retry, +hold_get/set (was 42) // -- ClaudeCode 2026-11-13 (filter tools): +filter_get/put/versions (was 39) // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
@@ -166,6 +166,16 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   ['lsp_spaces_link_sensitivity_get', {}, 'GET', '/v1/settings/link-sensitivity', undefined],
   ['lsp_spaces_link_sensitivity_set', { hosts: { 'zz-fixture.example.org': 'public', 'example.net': 'private' } }, 'PUT', '/v1/settings/link-sensitivity', { hosts: { 'zz-fixture.example.org': 'public', 'example.net': 'private' } }],
   ['lsp_spaces_link_sensitivity_set', { hosts: {} }, 'PUT', '/v1/settings/link-sensitivity', { hosts: {} }],
+  // -- ClaudeCode 2026-11-14 (step 4 inbox):
+  ['lsp_spaces_matches_list', { space_tenant_id: S, include_read: true }, 'GET', `/v1/spaces/${S}/matches?include_read=true`, undefined],
+  ['lsp_spaces_matches_list', { space_tenant_id: S, include_read: false, limit: 5 }, 'GET', `/v1/spaces/${S}/matches?limit=5`, undefined],
+  ['lsp_spaces_match_read', { space_tenant_id: S, connection_id: C, record_id: ID, read: true }, 'POST', `/v1/spaces/${S}/matches/${C}/${ID}/read`, undefined],
+  ['lsp_spaces_match_read', { space_tenant_id: S, connection_id: C, record_id: ID, read: false }, 'DELETE', `/v1/spaces/${S}/matches/${C}/${ID}/read`, undefined],
+  ['lsp_spaces_match_flag', { space_tenant_id: S, connection_id: C, record_id: ID }, 'POST', `/v1/spaces/${S}/matches/${C}/${ID}/flag`, { flag: 'not_for_space' }],
+  ['lsp_spaces_match_flag', { space_tenant_id: S, connection_id: C, record_id: ID, scope: 'domain' }, 'POST', `/v1/spaces/${S}/matches/${C}/${ID}/flag`, { flag: 'not_for_space', scope: 'domain' }],
+  ['lsp_spaces_missed_add', { space_tenant_id: S, kind: 'address', value: 'zz-fixture@example.invalid' }, 'POST', `/v1/spaces/${S}/missed`, { kind: 'address', value: 'zz-fixture@example.invalid' }],
+  ['lsp_spaces_missed_add', { space_tenant_id: S, kind: 'domain', value: 'example.invalid' }, 'POST', `/v1/spaces/${S}/missed`, { kind: 'domain', value: 'example.invalid' }],
+  ['lsp_spaces_flag_undo', { space_tenant_id: S, flag_id: ID }, 'POST', `/v1/spaces/${S}/flags/${ID}/undo`, {}],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -527,6 +537,41 @@ for (const bad of ['..', '../x', 'a/b', '%2e%2e', 'not-a-uuid', '']) {
   assert('open says the text is never kept', desc('lsp_spaces_match_link_open').includes('never kept'));
   assert('sites set says the customer only and that private always wins',
     desc('lsp_spaces_link_sensitivity_set').includes('The customer only') && desc('lsp_spaces_link_sensitivity_set').includes('Private always wins.'));
+}
+
+// -- ClaudeCode 2026-11-14 (step 4 inbox): input guards and plain words for the inbox tools.
+{
+  const n0 = calls.length;
+  const m = { space_tenant_id: S, connection_id: C, record_id: ID };
+  const bad = await Promise.all([
+    tryIt(() => spaces.handlers.lsp_spaces_match_read({ ...m })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_read({ ...m, read: 'yes' })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_read({ ...m, record_id: '../x', read: true })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_flag({ ...m, scope: 'everyone' })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_flag({ ...m, flag: 'missed' })),
+    tryIt(() => spaces.handlers.lsp_spaces_missed_add({ space_tenant_id: S, kind: 'name', value: 'x' })),
+    tryIt(() => spaces.handlers.lsp_spaces_missed_add({ space_tenant_id: S, kind: 'address', value: '' })),
+    tryIt(() => spaces.handlers.lsp_spaces_missed_add({ space_tenant_id: S, kind: 'domain', value: 'a'.repeat(255) })),
+    tryIt(() => spaces.handlers.lsp_spaces_flag_undo({ space_tenant_id: S, flag_id: 'nope' })),
+    tryIt(() => spaces.handlers.lsp_spaces_flag_undo({ space_tenant_id: S })),
+    tryIt(() => spaces.handlers.lsp_spaces_matches_list({ space_tenant_id: S, include_read: 'true' })),
+  ]);
+  assert('inbox tools: bad ids, a non-boolean read, a bad scope/kind/value, unknown fields and a non-boolean include_read are refused without a request',
+    bad.every(Boolean) && calls.length === n0, JSON.stringify(bad));
+  for (const [status, line] of [[409, 'This mail was already cleared.'], [422, 'This sender could not be read.'], [409, 'Already undone.'], [409, 'This was changed again since; change it in the sender list.']] as const) {
+    const n1 = calls.length;
+    queued.push({ status, body: { error: line } });
+    let refused = '';
+    try { const r = await spaces.handlers.lsp_spaces_flag_undo({ space_tenant_id: S, flag_id: ID }); refused = JSON.stringify(r); } catch (e) { refused = String(e); }
+    assert(`inbox: a ${status} "${line}" is passed through, one request, no retry`, refused.includes(String(status)) && refused.includes(line) && calls.length === n1 + 1);
+  }
+  const names = ['lsp_spaces_match_read', 'lsp_spaces_match_flag', 'lsp_spaces_missed_add', 'lsp_spaces_flag_undo', 'lsp_spaces_matches_list'];
+  const md = names.map(desc).join(' ');
+  assert('inbox descriptions carry no body/sort/sorter/runner words', !/\bbody\b|\bsort(ing|er|ed|s)?\b|sorter|runner/i.test(md));
+  assert('inbox descriptions give no example', !/for example|e\.g\./i.test(md));
+  assert('inbox: read/flag/missed/undo say the account owner only', names.slice(0, 4).every((n) => desc(n).includes('The account owner only')));
+  assert('inbox: flag and missed say how to take it back', desc('lsp_spaces_match_flag').includes('lsp_spaces_flag_undo') && desc('lsp_spaces_missed_add').includes('lsp_spaces_flag_undo'));
+  assert('matches_list says unread only unless include_read, and gives unread_count', desc('lsp_spaces_matches_list').includes('Unread only, unless include_read is true.') && desc('lsp_spaces_matches_list').includes('unread_count'));
 }
 
 console.log(`\n${failed === 0 ? 'ALL PASS' : `${failed} FAILED`} — ${calls.length} stubbed requests, 0 network.`);
