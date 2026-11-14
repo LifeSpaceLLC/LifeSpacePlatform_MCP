@@ -23,6 +23,18 @@ export const tools: ToolDef[] = [
           description: "Array of module ids to grant (e.g. ['dispatch','library','memory']).",
         },
         note: { type: 'string' },
+        // -- ClaudeCode 2026-11-14 (briefing cos fields): advertise the step 7 options Tenant already accepts.
+        kind: {
+          type: 'string',
+          enum: ['chief_of_staff'],
+          description:
+            "Optional. 'chief_of_staff' returns the one copy-paste Chief of Staff setup block (a new folder, connect, then a new session). Only for setting up your own account, signed in as the admin of that account's top (parent_tenant_id must be your own sign-in's tenant).",
+        },
+        folder_name: {
+          type: 'string',
+          description:
+            "Optional, only with kind 'chief_of_staff'. The name for the Chief of Staff and its folder (~/<name>). 1 to 60 characters: letters, digits, spaces, - and _. Default 'Chief of Staff'.",
+        },
       },
       required: ['agent_label', 'parent_tenant_id', 'modules'],
     },
