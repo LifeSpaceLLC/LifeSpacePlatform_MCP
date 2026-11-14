@@ -38,6 +38,10 @@
 //   GET   /v1/spaces/:space/checks?limit=   — one Space's own counts only
 //   POST  /v1/connections/:id/checks/retry  — body {check_id?} (owner)
 //   GET · PUT /v1/connections/:id/hold      — body {hold} (PUT: owner)
+// -- ClaudeCode 2026-11-14 (step 2 matches):
+//   GET   /v1/spaces/:space/matches?limit=  — matched mail for one Space (sender, subject, date)
+//   GET   /v1/spaces/:space/matches/:connectionId/:recordId/text — full text, only when switched on
+//   GET · PUT /v1/connections/:id/text-read — body {text_read} (PUT: owner)
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText, errText } from '../client.js';
 
@@ -104,6 +108,11 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_checks_retry: ['connection_id', 'check_id'],
   lsp_spaces_hold_get: ['connection_id'],
   lsp_spaces_hold_set: ['connection_id', 'hold'],
+  // -- ClaudeCode 2026-11-14 (step 2 matches):
+  lsp_spaces_matches_list: ['space_tenant_id', 'limit'],
+  lsp_spaces_match_text: ['space_tenant_id', 'connection_id', 'record_id'],
+  lsp_spaces_text_read_get: ['connection_id'],
+  lsp_spaces_text_read_set: ['connection_id', 'text_read'],
 };
 
 // -- ClaudeCode 2026-11-13 (filter tools): the filter file's parts, named once for the three descriptions.
@@ -778,6 +787,61 @@ export const tools: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // -- ClaudeCode 2026-11-14 (step 2 matches): matched mail and the full-text switch.
+  {
+    name: 'lsp_spaces_matches_list',
+    description:
+      "List the matched mail of one Space, newest first: mail its filters matched on every connection that Space may use, not yet read. Only sender, subject, date and a short snippet. The account owner or a seat on that Space; any other Space is not found. Returns {matches:[{connection_id, connection_label, record_id, from, subject, date, snippet, text_readable}], notes?}. text_readable true means the full text of that match may be read with lsp_spaces_match_text. A notes line \"One mailbox could not be read right now.\" means one mailbox failed and the rest are still listed. limit 1 to 100, default 20.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        limit: { type: 'number', description: 'Optional number of matches, 1 to 100 (default 20).' },
+      },
+      required: ['space_tenant_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_match_text',
+    description:
+      "Read the full text of one matched mail, only when the full-text switch of that connection is on, only for mail this Space's filters matched, and never the rest of the inbox. Take connection_id and record_id from lsp_spaces_matches_list. The text is read from the mailbox at the time of asking and is never kept. Returns {record_id, from, subject, date, text, truncated}; truncated true means the text was cut at 100,000 characters. Refusals: \"Reading full text is off for this mailbox.\", \"This mail did not match that Space.\", \"Test customers cannot read real mail.\", \"Needs reconnecting\" (a person must connect the mailbox again), \"The mail could not be read; try again.\"",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        connection_id: { type: 'string', description: 'Connection uuid, from the match.' },
+        record_id: { type: 'string', description: 'Record uuid, from the match.' },
+      },
+      required: ['space_tenant_id', 'connection_id', 'record_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_text_read_get',
+    description:
+      "Read the full-text switch of one connection: whether the AI session may read the full text of matched mail on this mailbox. The account owner only. Returns {connection_id, text_read}. Off (false) is the default: only sender, subject and date.",
+    inputSchema: {
+      type: 'object',
+      properties: { connection_id: { type: 'string', description: 'Connection uuid.' } },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_text_read_set',
+    description:
+      `Turn the full-text switch of one connection on or off. The account owner only; anyone else is refused. Off (the default): only sender, subject and date. On: the full text of mail the filters matched, only when the AI session asks; never the rest of the inbox. Returns {connection_id, text_read, listen_sync}. ${SYNC_WORDS}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+        text_read: { type: 'boolean', description: 'true = full text of matched mail may be read; false = only sender, subject and date.' },
+      },
+      required: ['connection_id', 'text_read'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Args = Record<string, unknown>;
@@ -981,6 +1045,17 @@ export const handlers: Record<string, ToolHandler> = {
     // -- ClaudeCode 2026-11-13 (path ids): hold must be true or false; refused before any request.
     if (typeof a.hold !== 'boolean') throw new Error('hold must be true or false.');
     return call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/hold`, 'PUT', body(a, ['hold']));
+  }),
+  // -- ClaudeCode 2026-11-14 (step 2 matches): one call each, Spaces' answer as is.
+  lsp_spaces_matches_list: handler('lsp_spaces_matches_list', ['space_tenant_id'], (a) =>
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/matches${qs({ limit: typeof a.limit === 'number' ? String(a.limit) : a.limit })}`, 'GET')),
+  lsp_spaces_match_text: handler('lsp_spaces_match_text', ['space_tenant_id', 'connection_id', 'record_id'], (a) =>
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/matches/${encId('connection_id', a.connection_id)}/${encId('record_id', a.record_id)}/text`, 'GET')),
+  lsp_spaces_text_read_get: handler('lsp_spaces_text_read_get', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/text-read`, 'GET')),
+  lsp_spaces_text_read_set: handler('lsp_spaces_text_read_set', ['connection_id'], (a) => {
+    if (typeof a.text_read !== 'boolean') throw new Error('text_read must be true or false.');
+    return call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/text-read`, 'PUT', body(a, ['text_read']));
   }),
 };
 

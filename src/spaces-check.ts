@@ -40,7 +40,8 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 46 lsp_spaces_* tools', spacesTools.length === 46, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (checks tools): +checks_list/retry, +hold_get/set (was 42) // -- ClaudeCode 2026-11-13 (filter tools): +filter_get/put/versions (was 39) // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
+assert('spaces module exposes 50 lsp_spaces_* tools', spacesTools.length === 50, // -- ClaudeCode 2026-11-14 (step 2 matches): +matches_list, +match_text, +text_read_get/set (was 46)
+  String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (checks tools): +checks_list/retry, +hold_get/set (was 42) // -- ClaudeCode 2026-11-13 (filter tools): +filter_get/put/versions (was 39) // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
     t.name.startsWith('lsp_spaces_') && t.description.length > 20
@@ -152,6 +153,13 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   ['lsp_spaces_hold_get', { connection_id: C }, 'GET', `/v1/connections/${C}/hold`, undefined],
   ['lsp_spaces_hold_set', { connection_id: C, hold: true }, 'PUT', `/v1/connections/${C}/hold`, { hold: true }],
   ['lsp_spaces_hold_set', { connection_id: C, hold: false }, 'PUT', `/v1/connections/${C}/hold`, { hold: false }],
+  // -- ClaudeCode 2026-11-14 (step 2 matches):
+  ['lsp_spaces_matches_list', { space_tenant_id: S }, 'GET', `/v1/spaces/${S}/matches`, undefined],
+  ['lsp_spaces_matches_list', { space_tenant_id: S, limit: 50 }, 'GET', `/v1/spaces/${S}/matches?limit=50`, undefined],
+  ['lsp_spaces_match_text', { space_tenant_id: S, connection_id: C, record_id: ID }, 'GET', `/v1/spaces/${S}/matches/${C}/${ID}/text`, undefined],
+  ['lsp_spaces_text_read_get', { connection_id: C }, 'GET', `/v1/connections/${C}/text-read`, undefined],
+  ['lsp_spaces_text_read_set', { connection_id: C, text_read: true }, 'PUT', `/v1/connections/${C}/text-read`, { text_read: true }],
+  ['lsp_spaces_text_read_set', { connection_id: C, text_read: false }, 'PUT', `/v1/connections/${C}/text-read`, { text_read: false }],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -386,6 +394,41 @@ for (const bad of ['..', '../x', 'a/b', '%2e%2e', 'not-a-uuid', '']) {
   const badHold = await tryIt(() => spaces.handlers.lsp_spaces_hold_set({ connection_id: C, hold: 'yes' }));
   assert('settings key "..", a non-number version and a non-boolean hold are refused without a request',
     badKey && badVer && badHold && calls.length === n0);
+}
+
+// -- ClaudeCode 2026-11-14 (step 2 matches): input guards, refusals passed through, plain words.
+{
+  const n0 = calls.length;
+  const badFlag = await tryIt(() => spaces.handlers.lsp_spaces_text_read_set({ connection_id: C, text_read: 'yes' }));
+  const noFlag = await tryIt(() => spaces.handlers.lsp_spaces_text_read_set({ connection_id: C }));
+  const badRec = await tryIt(() => spaces.handlers.lsp_spaces_match_text({ space_tenant_id: S, connection_id: C, record_id: '../x' }));
+  const badConn = await tryIt(() => spaces.handlers.lsp_spaces_match_text({ space_tenant_id: S, connection_id: 'nope', record_id: ID }));
+  const noRec = await tryIt(() => spaces.handlers.lsp_spaces_match_text({ space_tenant_id: S, connection_id: C }));
+  const badSpace = await tryIt(() => spaces.handlers.lsp_spaces_matches_list({ space_tenant_id: '..' }));
+  const extra = await tryIt(() => spaces.handlers.lsp_spaces_matches_list({ space_tenant_id: S, keys: [S] }));
+  assert('matches/text/switch: bad or missing ids, a non-boolean switch and unknown fields are refused without a request',
+    badFlag && noFlag && badRec && badConn && noRec && badSpace && extra && calls.length === n0);
+
+  const answer = { record_id: ID, from: 'ZZ-FIXTURE <a@example.invalid>', subject: 'ZZ-FIXTURE', date: '2026-11-14', text: 'ZZ-FIXTURE text', truncated: false };
+  queued.push({ status: 200, body: answer });
+  const got = await spaces.handlers.lsp_spaces_match_text({ space_tenant_id: S, connection_id: C, record_id: ID });
+  assert('match_text: the answer is passed through as is', !got.isError && JSON.stringify(JSON.parse(got.content[0].text)) === JSON.stringify(answer));
+  const n1 = calls.length;
+  queued.push({ status: 403, body: { error: 'Reading full text is off for this mailbox.' } });
+  let refused = '';
+  try { await spaces.handlers.lsp_spaces_match_text({ space_tenant_id: S, connection_id: C, record_id: ID }); } catch (e) { refused = String(e); }
+  assert('match_text: a 403 refusal line is passed through, one request, no retry',
+    refused.includes('403') && refused.includes('Reading full text is off for this mailbox.') && calls.length === n1 + 1);
+
+  const names = ['lsp_spaces_matches_list', 'lsp_spaces_match_text', 'lsp_spaces_text_read_get', 'lsp_spaces_text_read_set'];
+  const md = names.map(desc).join(' ');
+  assert('matches/text descriptions carry no body/sort/sorter/runner words', !/\bbody\b|\bsort(ing|er|ed|s)?\b|sorter|runner/i.test(md));
+  assert('matches/text descriptions give no example', !/for example|e\.g\./i.test(md));
+  assert('matches/text descriptions use the plain words', md.includes('matched mail') && md.includes('full text'));
+  assert('match_text says never the rest of the inbox and never kept',
+    desc('lsp_spaces_match_text').includes('never the rest of the inbox') && desc('lsp_spaces_match_text').includes('never kept'));
+  assert('text_read_set says off = sender, subject and date only',
+    desc('lsp_spaces_text_read_set').includes('Off (the default): only sender, subject and date.'));
 }
 
 console.log(`\n${failed === 0 ? 'ALL PASS' : `${failed} FAILED`} — ${calls.length} stubbed requests, 0 network.`);
