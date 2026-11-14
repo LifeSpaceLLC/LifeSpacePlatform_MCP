@@ -365,5 +365,28 @@ assert('unknown property is refused without a request', !!unk.isError && calls.l
 const miss = await spaces.handlers.lsp_spaces_connection_update({ label: 'x' });
 assert('missing path id is refused without a request', !!miss.isError && calls.length === before);
 
+// -- ClaudeCode 2026-11-13 (path ids): every id put into a path must be a uuid, refused before any request.
+const tryIt = async (fn: () => Promise<unknown>): Promise<boolean> => {
+  try { const r = (await fn()) as { isError?: boolean }; return !!r?.isError; } catch { return true; }
+};
+for (const bad of ['..', '../x', 'a/b', '%2e%2e', 'not-a-uuid', '']) {
+  const n0 = calls.length;
+  const refusedRetry = await tryIt(() => spaces.handlers.lsp_spaces_checks_retry({ connection_id: bad }));
+  const refusedList = await tryIt(() => spaces.handlers.lsp_spaces_checks_list({ connection_id: bad }));
+  const refusedSpace = await tryIt(() => spaces.handlers.lsp_spaces_checks_list({ space_tenant_id: bad }));
+  const refusedOld = await tryIt(() => spaces.handlers.lsp_spaces_connection_update({ id: bad, label: 'x' }));
+  const refusedTopic = await tryIt(() => spaces.handlers.lsp_spaces_topic_remove({ topic_id: bad }));
+  assert(`path id ${JSON.stringify(bad)} is refused by new and old tools without a request`,
+    refusedRetry && refusedList && refusedSpace && refusedOld && refusedTopic && calls.length === n0);
+}
+{
+  const n0 = calls.length;
+  const badKey = await tryIt(() => spaces.handlers.lsp_spaces_settings_get({ tenant_id: S, key: '..' }));
+  const badVer = await tryIt(() => spaces.handlers.lsp_spaces_filter_get({ space_tenant_id: S, connection_id: C, version: '../x' }));
+  const badHold = await tryIt(() => spaces.handlers.lsp_spaces_hold_set({ connection_id: C, hold: 'yes' }));
+  assert('settings key "..", a non-number version and a non-boolean hold are refused without a request',
+    badKey && badVer && badHold && calls.length === n0);
+}
+
 console.log(`\n${failed === 0 ? 'ALL PASS' : `${failed} FAILED`} — ${calls.length} stubbed requests, 0 network.`);
 process.exit(failed === 0 ? 0 : 1);

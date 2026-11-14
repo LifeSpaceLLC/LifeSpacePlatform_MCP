@@ -793,6 +793,8 @@ function checked(tool: string, raw: unknown, pathIds: string[]): Args | Error {
   }
   for (const k of pathIds) {
     if (typeof args[k] !== 'string' || !(args[k] as string).trim()) return new Error(`${k} is required (string).`);
+    // -- ClaudeCode 2026-11-13 (path ids): a path id must be a uuid; refused before any request.
+    if (!isUuid(args[k])) return new Error(`${k} must be a uuid.`);
   }
   return args;
 }
@@ -810,7 +812,25 @@ function qs(pairs: Record<string, unknown>): string {
   return s ? `?${s}` : '';
 }
 
-const enc = (v: unknown) => encodeURIComponent(String(v));
+// -- ClaudeCode 2026-11-13 (path ids): every value put into a Spaces path is checked BEFORE any
+// request. Ids must be uuids (so '..' or '/' can never change the route); the settings key is a
+// plain word; a filter version is a positive whole number.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const KEY_RE = /^[a-z][a-z0-9_]{0,63}$/;
+export function isUuid(v: unknown): v is string { return typeof v === 'string' && UUID_RE.test(v); }
+const encId = (name: string, v: unknown): string => {
+  if (!isUuid(v)) throw new Error(`${name} must be a uuid.`);
+  return v;
+};
+const encKey = (v: unknown): string => {
+  if (typeof v !== 'string' || !KEY_RE.test(v)) throw new Error('key must be a plain setting name (letters, digits, _).');
+  return v;
+};
+const encInt = (name: string, v: unknown): string => {
+  const n = typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v;
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) throw new Error(`${name} must be a whole number of 1 or more.`);
+  return String(n);
+};
 
 type Run = (a: Args) => Promise<unknown>;
 
@@ -824,19 +844,19 @@ function handler(tool: string, pathIds: string[], run: Run): ToolHandler {
 
 export const handlers: Record<string, ToolHandler> = {
   lsp_spaces_settings_get: handler('lsp_spaces_settings_get', ['tenant_id'], (a) =>
-    call('spaces', `/v1/settings/${enc(a.tenant_id)}${a.key ? `/${enc(a.key)}` : ''}`, 'GET')),
+    call('spaces', `/v1/settings/${encId('tenant_id', a.tenant_id)}${a.key ? `/${encKey(a.key)}` : ''}`, 'GET')),
   lsp_spaces_settings_set: handler('lsp_spaces_settings_set', ['tenant_id'], (a) =>
-    call('spaces', `/v1/settings/${enc(a.tenant_id)}`, 'PUT', body(a, ['key', 'value']))),
+    call('spaces', `/v1/settings/${encId('tenant_id', a.tenant_id)}`, 'PUT', body(a, ['key', 'value']))),
   lsp_spaces_connections_list: handler('lsp_spaces_connections_list', ['tenant_id'], (a) =>
     call('spaces', `/v1/connections${qs({ tenantId: a.tenant_id })}`, 'GET')),
   lsp_spaces_connection_add: handler('lsp_spaces_connection_add', [], (a) =>
     call('spaces', '/v1/connections', 'POST', body(a, FIELDS.lsp_spaces_connection_add))),
   lsp_spaces_connection_update: handler('lsp_spaces_connection_update', ['id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.id)}`, 'PATCH', body(a, ['tenant_id', 'label', 'access', 'status']))),
+    call('spaces', `/v1/connections/${encId('id', a.id)}`, 'PATCH', body(a, ['tenant_id', 'label', 'access', 'status']))),
   lsp_spaces_space_connections: handler('lsp_spaces_space_connections', ['space_tenant_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_tenant_id)}/connections`, 'GET')),
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/connections`, 'GET')),
   lsp_spaces_allow_set: handler('lsp_spaces_allow_set', ['space_tenant_id', 'connection_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_tenant_id)}/allow/${enc(a.connection_id)}`, 'PUT', body(a, ['mode']))),
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/allow/${encId('connection_id', a.connection_id)}`, 'PUT', body(a, ['mode']))),
   lsp_spaces_placements_list: handler('lsp_spaces_placements_list', [], (a) =>
     call('spaces', `/v1/placements${qs({
       scope: a.scope,
@@ -853,35 +873,35 @@ export const handlers: Record<string, ToolHandler> = {
   lsp_spaces_sender_rules_add: handler('lsp_spaces_sender_rules_add', [], (a) =>
     call('spaces', '/v1/sender-rules', 'POST', body(a, FIELDS.lsp_spaces_sender_rules_add))),
   lsp_spaces_sender_rules_update: handler('lsp_spaces_sender_rules_update', ['id'], (a) =>
-    call('spaces', `/v1/sender-rules/${enc(a.id)}`, 'PATCH', body(a, ['mode', 'state', 'hits']))),
+    call('spaces', `/v1/sender-rules/${encId('id', a.id)}`, 'PATCH', body(a, ['mode', 'state', 'hits']))),
   lsp_spaces_world_list: handler('lsp_spaces_world_list', ['tenant_id'], (a) =>
     call('spaces', `/v1/world${qs({ tenantId: a.tenant_id })}`, 'GET')),
   lsp_spaces_world_add: handler('lsp_spaces_world_add', [], (a) =>
     call('spaces', '/v1/world', 'POST', body(a, FIELDS.lsp_spaces_world_add))),
   lsp_spaces_world_update: handler('lsp_spaces_world_update', ['id'], (a) =>
-    call('spaces', `/v1/world/${enc(a.id)}`, 'PATCH', body(a, ['space_tenant_ids', 'note']))),
+    call('spaces', `/v1/world/${encId('id', a.id)}`, 'PATCH', body(a, ['space_tenant_ids', 'note']))),
   lsp_spaces_holds_list: handler('lsp_spaces_holds_list', ['tenant_id'], (a) =>
     call('spaces', `/v1/holds${qs({ tenantId: a.tenant_id })}`, 'GET')),
   lsp_spaces_holds_add: handler('lsp_spaces_holds_add', [], (a) =>
     call('spaces', '/v1/holds', 'POST', body(a, FIELDS.lsp_spaces_holds_add))),
   lsp_spaces_holds_answer: handler('lsp_spaces_holds_answer', ['id'], (a) =>
-    call('spaces', `/v1/holds/${enc(a.id)}/answer`, 'POST', body(a, ['answer']))),
+    call('spaces', `/v1/holds/${encId('id', a.id)}/answer`, 'POST', body(a, ['answer']))),
   // -- ClaudeCode 2026-11-12 (dashboard parity):
   lsp_spaces_me: handler('lsp_spaces_me', [], () => call('spaces', '/v1/me', 'GET')),
   lsp_spaces_overview: handler('lsp_spaces_overview', [], (a) =>
     call('spaces', `/v1/overview${qs({ scope: a.scope, spaces: a.space, topic: a.topic })}`, 'GET')),
   lsp_spaces_connection_spaces: handler('lsp_spaces_connection_spaces', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/spaces`, 'GET')),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/spaces`, 'GET')),
   lsp_spaces_connection_wants_set: handler('lsp_spaces_connection_wants_set', ['space_tenant_id', 'connection_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_tenant_id)}/connections/${enc(a.connection_id)}/wants`, 'PUT', body(a, ['text']))),
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/connections/${encId('connection_id', a.connection_id)}/wants`, 'PUT', body(a, ['text']))),
   lsp_spaces_connect: handler('lsp_spaces_connect', ['tenant_id'], (a) =>
     call('spaces', '/v1/connections/connect', 'POST', { ...body(a, ['tenant_id', 'label', 'return_to']), kind: 'mail' })),
   lsp_spaces_connect_start: handler('lsp_spaces_connect_start', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/connect/start`, 'POST', body(a, ['return_to']))),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/connect/start`, 'POST', body(a, ['return_to']))),
   lsp_spaces_connect_finish: handler('lsp_spaces_connect_finish', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/connect/finish`, 'POST', {})),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/connect/finish`, 'POST', {})),
   lsp_spaces_connect_status: handler('lsp_spaces_connect_status', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/status`, 'GET')),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/status`, 'GET')),
   lsp_spaces_read_put: handler('lsp_spaces_read_put', ['tenant_id'], (a) =>
     call('spaces', '/v1/reads', 'PUT', body(a, FIELDS.lsp_spaces_read_put))),
   // -- ClaudeCode 2026-11-13 (problems):
@@ -893,29 +913,29 @@ export const handlers: Record<string, ToolHandler> = {
   lsp_spaces_space_add: handler('lsp_spaces_space_add', [], (a) =>
     call('spaces', '/v1/spaces', 'POST', body(a, ['name']))),
   lsp_spaces_space_rename: handler('lsp_spaces_space_rename', ['space_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_id)}`, 'PATCH', body(a, ['name']))),
+    call('spaces', `/v1/spaces/${encId('space_id', a.space_id)}`, 'PATCH', body(a, ['name']))),
   // -- ClaudeCode 2026-11-13 (topics):
   lsp_spaces_topics_list: handler('lsp_spaces_topics_list', ['space_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_id)}/topics`, 'GET')),
+    call('spaces', `/v1/spaces/${encId('space_id', a.space_id)}/topics`, 'GET')),
   lsp_spaces_topic_add: handler('lsp_spaces_topic_add', ['space_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_id)}/topics`, 'POST', body(a, ['name', 'wants', 'connection_ids']))),
+    call('spaces', `/v1/spaces/${encId('space_id', a.space_id)}/topics`, 'POST', body(a, ['name', 'wants', 'connection_ids']))),
   lsp_spaces_topic_update: handler('lsp_spaces_topic_update', ['topic_id'], (a) =>
-    call('spaces', `/v1/topics/${enc(a.topic_id)}`, 'PATCH', body(a, ['name', 'wants', 'connection_ids', 'position']))),
+    call('spaces', `/v1/topics/${encId('topic_id', a.topic_id)}`, 'PATCH', body(a, ['name', 'wants', 'connection_ids', 'position']))),
   lsp_spaces_topic_remove: handler('lsp_spaces_topic_remove', ['topic_id'], (a) =>
-    call('spaces', `/v1/topics/${enc(a.topic_id)}`, 'DELETE')),
+    call('spaces', `/v1/topics/${encId('topic_id', a.topic_id)}`, 'DELETE')),
   // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter):
   lsp_spaces_sorting_start: handler('lsp_spaces_sorting_start', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/sorting/start`, 'POST', {})),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/sorting/start`, 'POST', {})),
   lsp_spaces_sorting_stop: handler('lsp_spaces_sorting_stop', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/sorting/stop`, 'POST', {})),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/sorting/stop`, 'POST', {})),
   lsp_spaces_runs_list: handler('lsp_spaces_runs_list', ['connection_id'], (a) =>
     call('spaces', `/v1/runs${qs({ connection_id: a.connection_id, limit: typeof a.limit === 'number' ? String(a.limit) : a.limit })}`, 'GET')),
   lsp_spaces_runs_compare: handler('lsp_spaces_runs_compare', ['run_id', 'other_run_id'], (a) =>
-    call('spaces', `/v1/runs/${enc(a.run_id)}/compare/${enc(a.other_run_id)}`, 'GET')),
+    call('spaces', `/v1/runs/${encId('run_id', a.run_id)}/compare/${encId('other_run_id', a.other_run_id)}`, 'GET')),
   // -- ClaudeCode 2026-11-13 (filter tools): one call each; no retry. The current GET's
   // 404 that carries lists_fingerprint is the "no filter yet" answer, not an error.
   lsp_spaces_filter_get: handler('lsp_spaces_filter_get', ['space_tenant_id', 'connection_id'], async (a) => {
-    const path = `${filterPath(a)}${a.version !== undefined ? `/versions/${enc(a.version)}` : ''}`;
+    const path = `${filterPath(a)}${a.version !== undefined ? `/versions/${encInt('version', a.version)}` : ''}`;
     try {
       return await call('spaces', path, 'GET');
     } catch (e) {
@@ -949,18 +969,21 @@ export const handlers: Record<string, ToolHandler> = {
     }
     const limit = qs({ limit: typeof a.limit === 'number' ? String(a.limit) : a.limit });
     const path = has('connection_id')
-      ? `/v1/connections/${enc(a.connection_id)}/checks${limit}`
-      : `/v1/spaces/${enc(a.space_tenant_id)}/checks${limit}`;
+      ? `/v1/connections/${encId('connection_id', a.connection_id)}/checks${limit}`
+      : `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/checks${limit}`;
     return okText(await call('spaces', path, 'GET'));
   },
   lsp_spaces_checks_retry: handler('lsp_spaces_checks_retry', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/checks/retry`, 'POST', body(a, ['check_id']))),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/checks/retry`, 'POST', body(a, ['check_id']))),
   lsp_spaces_hold_get: handler('lsp_spaces_hold_get', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/hold`, 'GET')),
-  lsp_spaces_hold_set: handler('lsp_spaces_hold_set', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/hold`, 'PUT', body(a, ['hold']))),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/hold`, 'GET')),
+  lsp_spaces_hold_set: handler('lsp_spaces_hold_set', ['connection_id'], (a) => {
+    // -- ClaudeCode 2026-11-13 (path ids): hold must be true or false; refused before any request.
+    if (typeof a.hold !== 'boolean') throw new Error('hold must be true or false.');
+    return call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/hold`, 'PUT', body(a, ['hold']));
+  }),
 };
 
 function filterPath(a: Args): string {
-  return `/v1/spaces/${enc(a.space_tenant_id)}/connections/${enc(a.connection_id)}/filter`;
+  return `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/connections/${encId('connection_id', a.connection_id)}/filter`;
 }
