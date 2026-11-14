@@ -40,7 +40,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 64 lsp_spaces_* tools', spacesTools.length === 64, // -- ClaudeCode 2026-11-14 (step 5 sweep): +sweep_start/read/propose, +sweeps_due, +suggestions_list, +suggestion_decide (was 58) // -- ClaudeCode 2026-11-14 (step 4 inbox): +match_read, +match_flag, +missed_add, +flag_undo (was 54) // -- ClaudeCode 2026-11-14 (step 3 links): +match_links, +match_link_open, +link_sensitivity_get/set (was 50) // -- ClaudeCode 2026-11-14 (step 2 matches): +matches_list, +match_text, +text_read_get/set (was 46)
+assert('spaces module exposes 66 lsp_spaces_* tools', spacesTools.length === 66, // -- ClaudeCode 2026-11-14 (step 6 caps): +usage, +watch_flags (was 64) // -- ClaudeCode 2026-11-14 (step 5 sweep): +sweep_start/read/propose, +sweeps_due, +suggestions_list, +suggestion_decide (was 58) // -- ClaudeCode 2026-11-14 (step 4 inbox): +match_read, +match_flag, +missed_add, +flag_undo (was 54) // -- ClaudeCode 2026-11-14 (step 3 links): +match_links, +match_link_open, +link_sensitivity_get/set (was 50) // -- ClaudeCode 2026-11-14 (step 2 matches): +matches_list, +match_text, +text_read_get/set (was 46)
   String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (checks tools): +checks_list/retry, +hold_get/set (was 42) // -- ClaudeCode 2026-11-13 (filter tools): +filter_get/put/versions (was 39) // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
@@ -186,6 +186,11 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   ['lsp_spaces_suggestions_list', { space_tenant_id: S }, 'GET', `/v1/spaces/${S}/suggestions`, undefined],
   ['lsp_spaces_suggestion_decide', { space_tenant_id: S, suggestion_id: ID, decision: 'approve' }, 'POST', `/v1/spaces/${S}/suggestions/${ID}/approve`, {}],
   ['lsp_spaces_suggestion_decide', { space_tenant_id: S, suggestion_id: ID, decision: 'dismiss' }, 'POST', `/v1/spaces/${S}/suggestions/${ID}/dismiss`, {}],
+  // -- ClaudeCode 2026-11-14 (step 6 caps):
+  ['lsp_spaces_usage', { space_tenant_id: S }, 'GET', `/v1/spaces/${S}/usage`, undefined],
+  ['lsp_spaces_watch_flags', {}, 'GET', '/v1/watch/flags', undefined],
+  ['lsp_spaces_watch_flags', { days: 7 }, 'GET', '/v1/watch/flags?days=7', undefined],
+  ['lsp_spaces_watch_flags', { days: 30 }, 'GET', '/v1/watch/flags?days=30', undefined],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -688,6 +693,51 @@ for (const bad of ['..', '../x', 'a/b', '%2e%2e', 'not-a-uuid', '']) {
     && desc('lsp_spaces_sweep_propose').includes('reason is optional, at most 200 characters, and not stored.') && !desc('lsp_spaces_sweep_propose').includes('shown to the owner'));
   assert('sweep_start and suggestions_list descriptions say the list is quoted data',
     desc('lsp_spaces_sweep_start').includes('<<<MAIL LIST and MAIL LIST>>>') && desc('lsp_spaces_suggestions_list').includes('<<<SUGGESTIONS and SUGGESTIONS>>>'));
+}
+
+// -- ClaudeCode 2026-11-14 (step 6 caps): input guards, refusals passed through, plain words for the usage and watch tools.
+{
+  const n0 = calls.length;
+  const bad = await Promise.all([
+    tryIt(() => spaces.handlers.lsp_spaces_usage({})),
+    tryIt(() => spaces.handlers.lsp_spaces_usage({ space_tenant_id: '../x' })),
+    tryIt(() => spaces.handlers.lsp_spaces_usage({ space_tenant_id: S, month: '2026-11' })),
+    tryIt(() => spaces.handlers.lsp_spaces_watch_flags({ days: 0 })),
+    tryIt(() => spaces.handlers.lsp_spaces_watch_flags({ days: -3 })),
+    tryIt(() => spaces.handlers.lsp_spaces_watch_flags({ days: 1.5 })),
+    tryIt(() => spaces.handlers.lsp_spaces_watch_flags({ days: 'week' })),
+    tryIt(() => spaces.handlers.lsp_spaces_watch_flags({ days: 31 })),
+    tryIt(() => spaces.handlers.lsp_spaces_watch_flags({ days: '7' })),
+    tryIt(() => spaces.handlers.lsp_spaces_watch_flags({ tenant_id: T })),
+  ]);
+  assert('usage/watch: a missing or bad id, a bad days value and unknown fields are refused without a request',
+    bad.every(Boolean) && calls.length === n0, JSON.stringify(bad));
+  const answer = { month: '2026-11', items: [{ kind: 'text_read', label: 'Full-text reads', used: 3, cap: 300 }], checks: [{ connection_id: C, connection_label: 'ZZ-FIXTURE mail', used: 12, cap: 10000 }] };
+  queued.push({ status: 200, body: answer });
+  const got = await spaces.handlers.lsp_spaces_usage({ space_tenant_id: S });
+  assert('usage: the answer is passed through as is', !got.isError && JSON.stringify(JSON.parse(got.content[0].text)) === JSON.stringify(answer));
+  for (const [tool, args, status, line] of [
+    ['lsp_spaces_usage', { space_tenant_id: S }, 403, 'Not your Space.'],
+    ['lsp_spaces_usage', { space_tenant_id: S }, 404, 'Space not found.'],
+    ['lsp_spaces_watch_flags', { days: 7 }, 403, 'Only the customer may see these flags.'],
+  ] as const) {
+    const n1 = calls.length;
+    queued.push({ status, body: { error: line } });
+    let refused = '';
+    try { const r = await spaces.handlers[tool](args); refused = JSON.stringify(r); } catch (e) { refused = String(e); }
+    assert(`${tool}: a ${status} "${line}" is passed through, one request, no retry`, refused.includes(String(status)) && refused.includes(line) && calls.length === n1 + 1);
+  }
+  const names = ['lsp_spaces_usage', 'lsp_spaces_watch_flags'];
+  const md = names.map(desc).join(' ');
+  assert('usage/watch descriptions carry no body/sort/sorter/runner words', !/\bbody\b|\bsort(ing|er|ed|s)?\b|sorter|runner/i.test(md));
+  assert('usage/watch descriptions give no example', !/for example|e\.g\./i.test(md));
+  assert('usage/watch descriptions carry no tokens or AI-usage jargon', !/token|ai usage|\bAI\b/i.test(md));
+  assert('usage uses the plain words and says read only',
+    ['full-text reads', 'links opened', 're-scans', 're-scan reads', 'mail checks'].every((w) => desc('lsp_spaces_usage').includes(w)) && desc('lsp_spaces_usage').includes('read only'));
+  assert('usage says a limit can only be lowered (key usage_caps)', desc('lsp_spaces_usage').includes('usage_caps') && desc('lsp_spaces_usage').includes('a higher limit is not available'));
+  assert('watch says flags are about use, never mail, and silence means fine',
+    desc('lsp_spaces_watch_flags').includes('never about mail') && desc('lsp_spaces_watch_flags').includes('Nothing listed means nothing was unusual.'));
+  assert('both tools are read only (GET)', calls.slice(n0).every((c) => c.method === 'GET'));
 }
 
 console.log(`\n${failed === 0 ? 'ALL PASS' : `${failed} FAILED`} — ${calls.length} stubbed requests, 0 network.`);
