@@ -40,7 +40,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 66 lsp_spaces_* tools', spacesTools.length === 66, // -- ClaudeCode 2026-11-14 (step 6 caps): +usage, +watch_flags (was 64) // -- ClaudeCode 2026-11-14 (step 5 sweep): +sweep_start/read/propose, +sweeps_due, +suggestions_list, +suggestion_decide (was 58) // -- ClaudeCode 2026-11-14 (step 4 inbox): +match_read, +match_flag, +missed_add, +flag_undo (was 54) // -- ClaudeCode 2026-11-14 (step 3 links): +match_links, +match_link_open, +link_sensitivity_get/set (was 50) // -- ClaudeCode 2026-11-14 (step 2 matches): +matches_list, +match_text, +text_read_get/set (was 46)
+assert('spaces module exposes 68 lsp_spaces_* tools', spacesTools.length === 68, // -- ClaudeCode 2026-11-14 (step 7 setup): +cos_start, +cos_space_brief (was 66) // -- ClaudeCode 2026-11-14 (step 6 caps): +usage, +watch_flags (was 64) // -- ClaudeCode 2026-11-14 (step 5 sweep): +sweep_start/read/propose, +sweeps_due, +suggestions_list, +suggestion_decide (was 58) // -- ClaudeCode 2026-11-14 (step 4 inbox): +match_read, +match_flag, +missed_add, +flag_undo (was 54) // -- ClaudeCode 2026-11-14 (step 3 links): +match_links, +match_link_open, +link_sensitivity_get/set (was 50) // -- ClaudeCode 2026-11-14 (step 2 matches): +matches_list, +match_text, +text_read_get/set (was 46)
   String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (checks tools): +checks_list/retry, +hold_get/set (was 42) // -- ClaudeCode 2026-11-13 (filter tools): +filter_get/put/versions (was 39) // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
@@ -190,7 +190,9 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   ['lsp_spaces_usage', { space_tenant_id: S }, 'GET', `/v1/spaces/${S}/usage`, undefined],
   ['lsp_spaces_watch_flags', {}, 'GET', '/v1/watch/flags', undefined],
   ['lsp_spaces_watch_flags', { days: 7 }, 'GET', '/v1/watch/flags?days=7', undefined],
-  ['lsp_spaces_watch_flags', { days: 30 }, 'GET', '/v1/watch/flags?days=30', undefined],
+  ['lsp_spaces_watch_flags', { days: 30 }, 'GET', '/v1/watch/flags?days=30', undefined],  // -- ClaudeCode 2026-11-14 (step 7 setup):
+  ['lsp_spaces_cos_start', {}, 'GET', '/v1/cos/start', undefined],
+  ['lsp_spaces_cos_space_brief', { space_tenant_id: S }, 'GET', `/v1/cos/space-brief/${S}`, undefined],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -738,6 +740,50 @@ for (const bad of ['..', '../x', 'a/b', '%2e%2e', 'not-a-uuid', '']) {
   assert('watch says flags are about use, never mail, and silence means fine',
     desc('lsp_spaces_watch_flags').includes('never about mail') && desc('lsp_spaces_watch_flags').includes('Nothing listed means nothing was unusual.'));
   assert('both tools are read only (GET)', calls.slice(n0).every((c) => c.method === 'GET'));
+}
+
+// -- ClaudeCode 2026-11-14 (step 7 setup): the two routine tools: shapes, guards, plain text unquoted, refusals passed through, plain words.
+{
+  const n0 = calls.length;
+  const bad = await Promise.all([
+    tryIt(() => spaces.handlers.lsp_spaces_cos_start({ space_tenant_id: S })),
+    tryIt(() => spaces.handlers.lsp_spaces_cos_space_brief({})),
+    tryIt(() => spaces.handlers.lsp_spaces_cos_space_brief({ space_tenant_id: '../x' })),
+    tryIt(() => spaces.handlers.lsp_spaces_cos_space_brief({ space_tenant_id: S, extra: 1 })),
+  ]);
+  assert('cos tools: unknown fields and a missing or bad Space id are refused without a request', bad.every(Boolean) && calls.length === n0, JSON.stringify(bad));
+  const routine = '1. Run lsp_trust_whoami.\n2. These are your Spaces.\nRoutine version 2026-11-14.1; if a later session sees a newer version, follow the newer one.';
+  const startAnswer = { routine_version: '2026-11-14.1', name_hint: 'Chief of Staff', spaces: [{ space_tenant_id: S, name: 'ZZ-FIXTURE Space', filtering: true, sweep_due: false }], text: routine };
+  queued.push({ status: 200, body: startAnswer });
+  const got = await spaces.handlers.lsp_spaces_cos_start({});
+  const out = got.content[0].text;
+  const { text: _t, ...restStart } = startAnswer;
+  assert('cos_start: the routine comes first as plain text, then the other fields as JSON',
+    !got.isError && out.startsWith(routine + '\n\n') && JSON.stringify(JSON.parse(out.slice(routine.length + 2))) === JSON.stringify(restStart));
+  assert('cos_start: the routine is not quoted as mail or page data', !/<<<|>>>|not instructions/.test(out));
+  const briefAnswer = { routine_version: '2026-11-14.1', space_tenant_id: S, name: 'ZZ-FIXTURE Space', text: '1. Work only on this Space.' };
+  queued.push({ status: 200, body: briefAnswer });
+  const gotB = await spaces.handlers.lsp_spaces_cos_space_brief({ space_tenant_id: S });
+  const outB = gotB.content[0].text;
+  assert('cos_space_brief: plain text first, then {routine_version, space_tenant_id, name}',
+    !gotB.isError && outB.startsWith('1. Work only on this Space.\n\n') && JSON.parse(outB.slice('1. Work only on this Space.\n\n'.length)).routine_version === '2026-11-14.1' && !/<<<|>>>/.test(outB));
+  for (const [tool, args, status, line] of [
+    ['lsp_spaces_cos_start', {}, 403, 'Only the account owner can start the Chief of Staff.'],
+    ['lsp_spaces_cos_space_brief', { space_tenant_id: S }, 403, 'Only the account owner can start the Chief of Staff.'],
+    ['lsp_spaces_cos_space_brief', { space_tenant_id: S }, 404, 'Space not found.'],
+  ] as const) {
+    const n1 = calls.length;
+    queued.push({ status, body: { error: line } });
+    let refused = '';
+    try { const r = await spaces.handlers[tool](args); refused = JSON.stringify(r); } catch (e) { refused = String(e); }
+    assert(`${tool}: a ${status} "${line}" is passed through, one request, no retry`, refused.includes(String(status)) && refused.includes(line) && calls.length === n1 + 1);
+  }
+  const cd = ['lsp_spaces_cos_start', 'lsp_spaces_cos_space_brief'].map(desc).join(' ');
+  assert('cos_start description is the exact first line', desc('lsp_spaces_cos_start').startsWith("Run this first when you start as someone's Chief of Staff; follow the routine it returns."));
+  assert('cos descriptions say owner only and name routine_version', (cd.match(/The account owner's own sign-in only\./g) ?? []).length === 2 && (cd.match(/routine_version/g) ?? []).length >= 2);
+  assert('cos descriptions carry no body/sort/sorter/runner words', !/\bbody\b|\bsort(ing|er|ed|s)?\b|sorter|runner/i.test(cd));
+  assert('cos descriptions give no example', !/for example|e\.g\./i.test(cd));
+  assert('both cos tools are read only (GET)', calls.slice(n0).every((c) => c.method === 'GET'));
 }
 
 console.log(`\n${failed === 0 ? 'ALL PASS' : `${failed} FAILED`} — ${calls.length} stubbed requests, 0 network.`);

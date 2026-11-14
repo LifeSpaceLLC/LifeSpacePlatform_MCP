@@ -49,6 +49,9 @@
 // -- ClaudeCode 2026-11-14 (step 6 caps):
 //   GET   /v1/spaces/:space/usage           — this month's counts against the monthly limits (owner or a seat)
 //   GET   /v1/watch/flags?days=             — the daily watch's flags (the customer's own; all for a root super_admin)
+// -- ClaudeCode 2026-11-14 (step 7 setup):
+//   GET   /v1/cos/start                     — the Chief of Staff's routine (owner only)
+//   GET   /v1/cos/space-brief/:space        — one Space's routine for its sub-session (owner only)
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText, errText } from '../client.js';
 
@@ -140,6 +143,9 @@ const FIELDS: Record<string, string[]> = {
   // -- ClaudeCode 2026-11-14 (step 6 caps):
   lsp_spaces_usage: ['space_tenant_id'],
   lsp_spaces_watch_flags: ['days'],
+  // -- ClaudeCode 2026-11-14 (step 7 setup):
+  lsp_spaces_cos_start: [],
+  lsp_spaces_cos_space_brief: ['space_tenant_id'],
 };
 
 // -- ClaudeCode 2026-11-13 (filter tools): the filter file's parts, named once for the three descriptions.
@@ -1116,6 +1122,23 @@ export const tools: ToolDef[] = [
       },
       additionalProperties: false,
     },
+  },  // -- ClaudeCode 2026-11-14 (step 7 setup): the routine comes from the service, so a change needs no new paste.
+  {
+    name: 'lsp_spaces_cos_start',
+    description:
+      "Run this first when you start as someone's Chief of Staff; follow the routine it returns. The account owner's own sign-in only. Returns the routine as plain numbered steps from the service, then {routine_version, name_hint, spaces:[{space_tenant_id, name, filtering, sweep_due}]} as JSON. If a later session sees a newer routine_version, follow the newer one.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'lsp_spaces_cos_space_brief',
+    description:
+      "The routine for a sub-session that works one Space for the Chief of Staff. Run it when your first message says to; follow the routine it returns and work only on that Space. The account owner's own sign-in only. Returns the routine as plain numbered steps from the service, then {routine_version, space_tenant_id, name} as JSON.",
+    inputSchema: {
+      type: 'object',
+      properties: { space_tenant_id: { type: 'string', description: 'Space tenant uuid.' } },
+      required: ['space_tenant_id'],
+      additionalProperties: false,
+    },
   },
 ];
 
@@ -1226,6 +1249,21 @@ function quotedHandler(tool: string, pathIds: string[], kind: 'mail' | 'page', r
     const a = checked(tool, raw, pathIds);
     if (a instanceof Error) return errText(a);
     return quoteText(kind, await run(a));
+  };
+}
+
+// -- ClaudeCode 2026-11-14 (step 7 setup): the routine text is instructions from the service, not mail data:
+// it comes back as plain text, unquoted, with the other fields as JSON after it.
+export function routineText(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
+  if (!data || typeof data !== 'object' || typeof (data as Args).text !== 'string') return okText(data);
+  const { text, ...rest } = data as Args;
+  return { content: [{ type: 'text', text: `${text as string}\n\n${JSON.stringify(rest, null, 2)}` }] };
+}
+function routineHandler(tool: string, pathIds: string[], run: Run): ToolHandler {
+  return async (raw) => {
+    const a = checked(tool, raw, pathIds);
+    if (a instanceof Error) return errText(a);
+    return routineText(await run(a));
   };
 }
 
@@ -1437,7 +1475,11 @@ export const handlers: Record<string, ToolHandler> = {
   lsp_spaces_usage: handler('lsp_spaces_usage', ['space_tenant_id'], (a) =>
     call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/usage`, 'GET')),
   lsp_spaces_watch_flags: handler('lsp_spaces_watch_flags', [], (a) =>
-    call('spaces', `/v1/watch/flags${qs({ days: a.days === undefined ? undefined : String(encDays(a.days)) })}` /* -- ClaudeCode 2026-11-14 (step 6 caps): the same 1 to 30 rule as the re-scan */, 'GET')),
+    call('spaces', `/v1/watch/flags${qs({ days: a.days === undefined ? undefined : String(encDays(a.days)) })}` /* -- ClaudeCode 2026-11-14 (step 6 caps): the same 1 to 30 rule as the re-scan */, 'GET')),  // -- ClaudeCode 2026-11-14 (step 7 setup):
+  lsp_spaces_cos_start: routineHandler('lsp_spaces_cos_start', [], () =>
+    call('spaces', '/v1/cos/start', 'GET')),
+  lsp_spaces_cos_space_brief: routineHandler('lsp_spaces_cos_space_brief', ['space_tenant_id'], (a) =>
+    call('spaces', `/v1/cos/space-brief/${encId('space_tenant_id', a.space_tenant_id)}`, 'GET')),
 };
 
 // -- ClaudeCode 2026-11-14 (step 5 sweep): input-shape checks before any request. The service checks again.
