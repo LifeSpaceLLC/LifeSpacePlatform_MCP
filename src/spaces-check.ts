@@ -40,7 +40,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 50 lsp_spaces_* tools', spacesTools.length === 50, // -- ClaudeCode 2026-11-14 (step 2 matches): +matches_list, +match_text, +text_read_get/set (was 46)
+assert('spaces module exposes 54 lsp_spaces_* tools', spacesTools.length === 54, // -- ClaudeCode 2026-11-14 (step 3 links): +match_links, +match_link_open, +link_sensitivity_get/set (was 50) // -- ClaudeCode 2026-11-14 (step 2 matches): +matches_list, +match_text, +text_read_get/set (was 46)
   String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (checks tools): +checks_list/retry, +hold_get/set (was 42) // -- ClaudeCode 2026-11-13 (filter tools): +filter_get/put/versions (was 39) // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
@@ -160,6 +160,12 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
   ['lsp_spaces_text_read_get', { connection_id: C }, 'GET', `/v1/connections/${C}/text-read`, undefined],
   ['lsp_spaces_text_read_set', { connection_id: C, text_read: true }, 'PUT', `/v1/connections/${C}/text-read`, { text_read: true }],
   ['lsp_spaces_text_read_set', { connection_id: C, text_read: false }, 'PUT', `/v1/connections/${C}/text-read`, { text_read: false }],
+  // -- ClaudeCode 2026-11-14 (step 3 links):
+  ['lsp_spaces_match_links', { space_tenant_id: S, connection_id: C, record_id: ID }, 'GET', `/v1/spaces/${S}/matches/${C}/${ID}/links`, undefined],
+  ['lsp_spaces_match_link_open', { space_tenant_id: S, connection_id: C, record_id: ID, url: 'https://zz-fixture.example.org/a?b=1' }, 'POST', `/v1/spaces/${S}/matches/${C}/${ID}/links/open`, { url: 'https://zz-fixture.example.org/a?b=1' }],
+  ['lsp_spaces_link_sensitivity_get', {}, 'GET', '/v1/settings/link-sensitivity', undefined],
+  ['lsp_spaces_link_sensitivity_set', { hosts: { 'zz-fixture.example.org': 'public', 'example.net': 'private' } }, 'PUT', '/v1/settings/link-sensitivity', { hosts: { 'zz-fixture.example.org': 'public', 'example.net': 'private' } }],
+  ['lsp_spaces_link_sensitivity_set', { hosts: {} }, 'PUT', '/v1/settings/link-sensitivity', { hosts: {} }],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -429,6 +435,60 @@ for (const bad of ['..', '../x', 'a/b', '%2e%2e', 'not-a-uuid', '']) {
     desc('lsp_spaces_match_text').includes('never the rest of the inbox') && desc('lsp_spaces_match_text').includes('never kept'));
   assert('text_read_set says off = sender, subject and date only',
     desc('lsp_spaces_text_read_set').includes('Off (the default): only sender, subject and date.'));
+}
+
+// -- ClaudeCode 2026-11-14 (step 3 links): input guards, refusals passed through, plain words.
+{
+  const n0 = calls.length;
+  const m = { space_tenant_id: S, connection_id: C, record_id: ID };
+  const refusals = await Promise.all([
+    tryIt(() => spaces.handlers.lsp_spaces_match_links({ ...m, record_id: '../x' })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_links({ ...m, connection_id: 'nope' })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_links({ ...m, url: 'https://zz-fixture.example.org/' })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_link_open({ ...m })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_link_open({ ...m, url: 'javascript:alert(1)' })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_link_open({ ...m, url: 'ftp://zz-fixture.example.org/f' })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_link_open({ ...m, url: 'not a link' })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_link_open({ ...m, url: 42 })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_link_open({ ...m, url: `https://zz-fixture.example.org/${'a'.repeat(2000)}` })),
+    tryIt(() => spaces.handlers.lsp_spaces_match_link_open({ ...m, space_tenant_id: '..', url: 'https://zz-fixture.example.org/' })),
+    tryIt(() => spaces.handlers.lsp_spaces_link_sensitivity_get({ tenant_id: T })),
+    tryIt(() => spaces.handlers.lsp_spaces_link_sensitivity_set({})),
+    tryIt(() => spaces.handlers.lsp_spaces_link_sensitivity_set({ hosts: ['example.org'] })),
+    tryIt(() => spaces.handlers.lsp_spaces_link_sensitivity_set({ hosts: { 'Example.org': 'public' } })),
+    tryIt(() => spaces.handlers.lsp_spaces_link_sensitivity_set({ hosts: { 'example.org/x': 'public' } })),
+    tryIt(() => spaces.handlers.lsp_spaces_link_sensitivity_set({ hosts: { 'example.org': 'maybe' } })),
+    tryIt(() => spaces.handlers.lsp_spaces_link_sensitivity_set({ hosts: Object.fromEntries(Array.from({ length: 201 }, (_, i) => [`s${i}.example.org`, 'public'])) })),
+  ]);
+  assert('links/open/sites: bad ids, a bad or long url, a bad site list and unknown fields are refused without a request',
+    refusals.every(Boolean) && calls.length === n0, JSON.stringify(refusals));
+  const at2000 = `https://zz-fixture.example.org/${'a'.repeat(2000 - 'https://zz-fixture.example.org/'.length)}`;
+  await spaces.handlers.lsp_spaces_match_link_open({ ...m, url: at2000 });
+  assert('open: a 2000-character link is sent as is', calls.length === n0 + 1 && (calls[calls.length - 1].body as { url: string }).url === at2000);
+  const two00 = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`s${i}.example.org`, 'private']));
+  await spaces.handlers.lsp_spaces_link_sensitivity_set({ hosts: two00 });
+  assert('sites: 200 sites are sent', calls.length === n0 + 2 && Object.keys((calls[calls.length - 1].body as { hosts: object }).hosts).length === 200);
+
+  const answer = { url: 'https://zz-fixture.example.org/', title: 'ZZ-FIXTURE', text: 'ZZ-FIXTURE page text', truncated: false, from_cache: true };
+  queued.push({ status: 200, body: answer });
+  const got = await spaces.handlers.lsp_spaces_match_link_open({ ...m, url: 'https://zz-fixture.example.org/' });
+  assert('open: the answer is passed through as is', !got.isError && JSON.stringify(JSON.parse(got.content[0].text)) === JSON.stringify(answer));
+  for (const [status, line] of [[403, 'Private link: not opened.'], [404, 'That link is not in this mail.'], [503, 'Reading links is not set up yet.'], [415, 'Not a page or PDF.']] as const) {
+    const n1 = calls.length;
+    queued.push({ status, body: { error: line } });
+    let refused = '';
+    try { const r = await spaces.handlers.lsp_spaces_match_link_open({ ...m, url: 'https://zz-fixture.example.org/' }); refused = JSON.stringify(r); } catch (e) { refused = String(e); }
+    assert(`open: a ${status} "${line}" is passed through, one request, no retry`, refused.includes(String(status)) && refused.includes(line) && calls.length === n1 + 1);
+  }
+
+  const names = ['lsp_spaces_match_links', 'lsp_spaces_match_link_open', 'lsp_spaces_link_sensitivity_get', 'lsp_spaces_link_sensitivity_set'];
+  const md = names.map(desc).join(' ');
+  assert('links descriptions carry no body/sort/sorter/runner words', !/\bbody\b|\bsort(ing|er|ed|s)?\b|sorter|runner/i.test(md));
+  assert('links descriptions give no example', !/for example|e\.g\./i.test(md));
+  assert('links say a private link is never opened', desc('lsp_spaces_match_link_open').includes('A private link is never opened.') && desc('lsp_spaces_match_links').includes('never opened'));
+  assert('open says the text is never kept', desc('lsp_spaces_match_link_open').includes('never kept'));
+  assert('sites set says the customer only and that private always wins',
+    desc('lsp_spaces_link_sensitivity_set').includes('The customer only') && desc('lsp_spaces_link_sensitivity_set').includes('Private always wins.'));
 }
 
 console.log(`\n${failed === 0 ? 'ALL PASS' : `${failed} FAILED`} — ${calls.length} stubbed requests, 0 network.`);

@@ -42,6 +42,10 @@
 //   GET   /v1/spaces/:space/matches?limit=  — matched mail for one Space (sender, subject, date)
 //   GET   /v1/spaces/:space/matches/:connectionId/:recordId/text — full text, only when switched on
 //   GET · PUT /v1/connections/:id/text-read — body {text_read} (PUT: owner)
+// -- ClaudeCode 2026-11-14 (step 3 links):
+//   GET   /v1/spaces/:space/matches/:connectionId/:recordId/links      — links in one matched mail
+//   POST  /v1/spaces/:space/matches/:connectionId/:recordId/links/open — body {url}; public links only
+//   GET · PUT /v1/settings/link-sensitivity — body {hosts} (PUT: the customer)
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText, errText } from '../client.js';
 
@@ -113,6 +117,11 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_match_text: ['space_tenant_id', 'connection_id', 'record_id'],
   lsp_spaces_text_read_get: ['connection_id'],
   lsp_spaces_text_read_set: ['connection_id', 'text_read'],
+  // -- ClaudeCode 2026-11-14 (step 3 links):
+  lsp_spaces_match_links: ['space_tenant_id', 'connection_id', 'record_id'],
+  lsp_spaces_match_link_open: ['space_tenant_id', 'connection_id', 'record_id', 'url'],
+  lsp_spaces_link_sensitivity_get: [],
+  lsp_spaces_link_sensitivity_set: ['hosts'],
 };
 
 // -- ClaudeCode 2026-11-13 (filter tools): the filter file's parts, named once for the three descriptions.
@@ -842,6 +851,57 @@ export const tools: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // -- ClaudeCode 2026-11-14 (step 3 links): links in matched mail and the per-site choice.
+  {
+    name: 'lsp_spaces_match_links',
+    description:
+      "List the links in one matched mail, with the same checks as lsp_spaces_match_text (the full-text switch must be on and the mail must have matched that Space). Each link says whether it is public or private and why. Sign-in, unsubscribe, confirm and personal links are private and are never opened. Returns {links:[{url, host, kind, reason, openable}]}; openable true means lsp_spaces_match_link_open may read it.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        connection_id: { type: 'string', description: 'Connection uuid, from the match.' },
+        record_id: { type: 'string', description: 'Record uuid, from the match.' },
+      },
+      required: ['space_tenant_id', 'connection_id', 'record_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_match_link_open',
+    description:
+      "Read the text of one public link in a matched mail: a web page or a PDF. The url must be one of the links lsp_spaces_match_links listed for that mail. A private link is never opened. Returns {url, title, text, truncated, from_cache}; the text is never kept by Spaces. Refusals: \"That link is not in this mail.\", \"Private link: not opened.\", \"Reading links is not set up yet.\", \"Not a usable link.\", \"Too large to read.\", \"Not a page or PDF.\", \"No readable text.\", \"The link could not be read.\", \"The link took too long.\", plus the refusals of lsp_spaces_match_text.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        connection_id: { type: 'string', description: 'Connection uuid, from the match.' },
+        record_id: { type: 'string', description: 'Record uuid, from the match.' },
+        url: { type: 'string', description: 'The link, exactly as lsp_spaces_match_links listed it (http or https, at most 2000 characters).' },
+      },
+      required: ['space_tenant_id', 'connection_id', 'record_id', 'url'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_link_sensitivity_get',
+    description:
+      "Read the customer's own choice of which sites count as public or private for links in matched mail. Returns {hosts:{\"<site>\": \"public\"|\"private\"}}. A site not listed keeps its default.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'lsp_spaces_link_sensitivity_set',
+    description:
+      "Save the customer's choice of which sites count as public or private for links in matched mail. The customer only; a seat is refused. Replaces the whole list: at most 200 sites, each a lowercase site name, each public or private. Private always wins. Public opens a site that is private by default, but its text is never shared with other customers; a sign-in or personal link stays private whatever is chosen. Returns the saved {hosts}.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        hosts: { type: 'object', description: 'Site name to public or private, the whole list.', additionalProperties: { type: 'string', enum: ['public', 'private'] } },
+      },
+      required: ['hosts'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Args = Record<string, unknown>;
@@ -1057,7 +1117,41 @@ export const handlers: Record<string, ToolHandler> = {
     if (typeof a.text_read !== 'boolean') throw new Error('text_read must be true or false.');
     return call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/text-read`, 'PUT', body(a, ['text_read']));
   }),
+  // -- ClaudeCode 2026-11-14 (step 3 links): one call each, Spaces' answer as is.
+  lsp_spaces_match_links: handler('lsp_spaces_match_links', ['space_tenant_id', 'connection_id', 'record_id'], (a) =>
+    call('spaces', `${matchPath(a)}/links`, 'GET')),
+  lsp_spaces_match_link_open: handler('lsp_spaces_match_link_open', ['space_tenant_id', 'connection_id', 'record_id'], (a) =>
+    call('spaces', `${matchPath(a)}/links/open`, 'POST', { url: encUrl(a.url) })),
+  lsp_spaces_link_sensitivity_get: handler('lsp_spaces_link_sensitivity_get', [], () =>
+    call('spaces', '/v1/settings/link-sensitivity', 'GET')),
+  lsp_spaces_link_sensitivity_set: handler('lsp_spaces_link_sensitivity_set', [], (a) =>
+    call('spaces', '/v1/settings/link-sensitivity', 'PUT', { hosts: encHosts(a.hosts) })),
 };
+
+// -- ClaudeCode 2026-11-14 (step 3 links): input checks before any request. The service checks again.
+function matchPath(a: Args): string {
+  return `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/matches/${encId('connection_id', a.connection_id)}/${encId('record_id', a.record_id)}`;
+}
+function encUrl(v: unknown): string {
+  if (typeof v !== 'string' || v.length === 0 || v.length > 2000) throw new Error('url must be a link of at most 2000 characters.');
+  let u: URL;
+  try { u = new URL(v); } catch { throw new Error('url must be an http or https link.'); }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('url must be an http or https link.');
+  return v;
+}
+const HOST_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$/;
+function encHosts(v: unknown): Record<string, 'public' | 'private'> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('hosts must be an object of site name to public or private.');
+  const entries = Object.entries(v as Record<string, unknown>);
+  if (entries.length > 200) throw new Error('hosts may list at most 200 sites.');
+  const out: Record<string, 'public' | 'private'> = {};
+  for (const [h, k] of entries) {
+    if (!HOST_RE.test(h)) throw new Error('Each site must be a lowercase site name.');
+    if (k !== 'public' && k !== 'private') throw new Error('Each site must be public or private.');
+    out[h] = k;
+  }
+  return out;
+}
 
 function filterPath(a: Args): string {
   return `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/connections/${encId('connection_id', a.connection_id)}/filter`;
