@@ -46,6 +46,9 @@
 //   GET   /v1/spaces/:space/matches/:connectionId/:recordId/links      — links in one matched mail
 //   POST  /v1/spaces/:space/matches/:connectionId/:recordId/links/open — body {url}; public links only
 //   GET · PUT /v1/settings/link-sensitivity — body {hosts} (PUT: the customer)
+// -- ClaudeCode 2026-11-14 (step 6 caps):
+//   GET   /v1/spaces/:space/usage           — this month's counts against the monthly limits (owner or a seat)
+//   GET   /v1/watch/flags?days=             — the daily watch's flags (the customer's own; all for a root super_admin)
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText, errText } from '../client.js';
 
@@ -134,6 +137,9 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_sweeps_due: [],
   lsp_spaces_suggestions_list: ['space_tenant_id'],
   lsp_spaces_suggestion_decide: ['space_tenant_id', 'suggestion_id', 'decision'],
+  // -- ClaudeCode 2026-11-14 (step 6 caps):
+  lsp_spaces_usage: ['space_tenant_id'],
+  lsp_spaces_watch_flags: ['days'],
 };
 
 // -- ClaudeCode 2026-11-13 (filter tools): the filter file's parts, named once for the three descriptions.
@@ -1085,6 +1091,32 @@ export const tools: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // -- ClaudeCode 2026-11-14 (step 6 caps): this month's use and the daily watch's flags. Read only.
+  {
+    name: 'lsp_spaces_usage',
+    description:
+      "This month's use of one Space against its monthly limits. The account owner or a seat on that Space; read only. Returns {month, items:[{kind, label, used, cap}], checks:[{connection_id, connection_label, used, cap}]}. items covers full-text reads, links opened, re-scans and re-scan reads; checks covers mail checks per mailbox. At a limit the action stops and says so until the 1st of next month. Show the labels as they are. The customer can lower a limit with lsp_spaces_settings_set, key usage_caps on the Space; a higher limit is not available.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+      },
+      required: ['space_tenant_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_watch_flags',
+    description:
+      "The daily watch's flags: one plain line per unusual day, per Space or per mailbox. The customer sees its own flags; the platform admin sees every customer's. A flag is about counts of use only, never about mail. Nothing listed means nothing was unusual. days is optional, a whole number from 1 to 30 (default 7). Returns {days, count, flags:[{id, day, kind, line, space_tenant_id, connection_id, emailed}]}, newest day first; kind is the rule and the counted action joined by a colon, the rule being spike, cap_80, cap_100, frequent or loop. Show the lines as they are.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days: { type: 'integer', minimum: 1, maximum: 30, description: 'Optional. How many days back, 1 to 30 (default 7).' },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Args = Record<string, unknown>;
@@ -1401,6 +1433,11 @@ export const handlers: Record<string, ToolHandler> = {
     if (a.decision !== 'approve' && a.decision !== 'dismiss') throw new Error('decision must be approve or dismiss.');
     return call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/suggestions/${encId('suggestion_id', a.suggestion_id)}/${a.decision}`, 'POST', {});
   }),
+  // -- ClaudeCode 2026-11-14 (step 6 caps): one call each, Spaces' answer as is.
+  lsp_spaces_usage: handler('lsp_spaces_usage', ['space_tenant_id'], (a) =>
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/usage`, 'GET')),
+  lsp_spaces_watch_flags: handler('lsp_spaces_watch_flags', [], (a) =>
+    call('spaces', `/v1/watch/flags${qs({ days: a.days === undefined ? undefined : String(encDays(a.days)) })}` /* -- ClaudeCode 2026-11-14 (step 6 caps): the same 1 to 30 rule as the re-scan */, 'GET')),
 };
 
 // -- ClaudeCode 2026-11-14 (step 5 sweep): input-shape checks before any request. The service checks again.
