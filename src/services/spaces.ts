@@ -33,6 +33,11 @@
 // -- ClaudeCode 2026-11-13 (add a Space): 12:20 PM PDT
 //   POST  /v1/spaces                        — add a Space (owner admin sign-in only)
 //   PATCH /v1/spaces/:id                    — rename a Space (name only)
+// -- ClaudeCode 2026-11-13 (checks tools):
+//   GET   /v1/connections/:id/checks?limit= — the checks on one connection (customer)
+//   GET   /v1/spaces/:space/checks?limit=   — one Space's own counts only
+//   POST  /v1/connections/:id/checks/retry  — body {check_id?} (owner)
+//   GET · PUT /v1/connections/:id/hold      — body {hold} (PUT: owner)
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText, errText } from '../client.js';
 
@@ -94,11 +99,22 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_filter_get: ['space_tenant_id', 'connection_id', 'version'],
   lsp_spaces_filter_put: ['space_tenant_id', 'connection_id', 'file', 'base_version', 'lists_fingerprint'],
   lsp_spaces_filter_versions: ['space_tenant_id', 'connection_id'],
+  // -- ClaudeCode 2026-11-13 (checks tools):
+  lsp_spaces_checks_list: ['connection_id', 'space_tenant_id', 'limit'],
+  lsp_spaces_checks_retry: ['connection_id', 'check_id'],
+  lsp_spaces_hold_get: ['connection_id'],
+  lsp_spaces_hold_set: ['connection_id', 'hold'],
 };
 
 // -- ClaudeCode 2026-11-13 (filter tools): the filter file's parts, named once for the three descriptions.
 const FILTER_PARTS =
   "The filter file is one JSON file per Space per connection, kept in the cloud and versioned. The account owner's own Claude session writes this file from the Space's look-for text; no paid AI is called. Its parts: keywords (words or phrases to look for); keywords_skip_categories (any of primary, social, promotions, updates, forums); sender_domains and sender_addresses (senders whose mail always comes here); sender_domain_blacklist and sender_address_blacklist (senders whose mail never comes here); priority_vs_noise {priority, noise} (plain notes on what matters and what does not); learn {auto_add_sender_after_hits, suggest_permanent_after_hits, correction_becomes_rule}. The four sender lists are shared by every connection of the Space.";
+
+// -- ClaudeCode 2026-11-13 (checks tools): what a check is, said once for the four descriptions.
+const CHECK_WORDS =
+  "A check is Listen looking at the mailbox for what each Space's filter matches. It reads metadata only: sender, subject and date. more_waiting true means more mail is waiting, and the next check continues. A failed check carries failure_kind and a plain reason; \"The mailbox needs reconnecting.\" (failure_kind signin) means the mailbox sign-in no longer works, and a person must connect it again (lsp_spaces_connect_start) before checks can run.";
+const SYNC_WORDS =
+  "A listen_sync of 'pending' or 'queued' means the change is saved and reaches the mailbox service with the next change or a Retry (lsp_spaces_checks_retry).";
 
 export const tools: ToolDef[] = [
   {
@@ -708,6 +724,60 @@ export const tools: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // -- ClaudeCode 2026-11-13 (checks tools): checks, retry and the holding switch.
+  {
+    name: 'lsp_spaces_checks_list',
+    description:
+      `The checks Listen ran, newest first. Give exactly ONE of connection_id or space_tenant_id. connection_id: every check on that connection, with each Space's match count; the account owner only. Returns {connection_id, checks:[{check_id, at, finished_at, ok, failure_kind, reason, more_waiting, held, matches:[{space_id, space_name, count}]}], note?}. space_tenant_id: the checks on every connection that Space may use, with ONLY that Space's own count; the account owner or a seat on that Space. Returns {space_id, checks:[{at, connection:{id, label}, ok, failure_kind, reason, more_waiting, held, count}], note?}. When filtering is not started, checks is empty and note says why. limit 1 to 100, default 20. Returns Spaces' answer as is. ${CHECK_WORDS}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: { type: 'string', description: 'Connection uuid. Give this or space_tenant_id, not both.' },
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid. Give this or connection_id, not both.' },
+        limit: { type: 'number', description: 'Optional number of checks, 1 to 100 (default 20).' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_checks_retry',
+    description:
+      `Retry on one connection: it first re-sends any pending filter changes, then runs a check now. The account owner only; anyone else is refused. check_id is optional: the failed check this one retries. Returns {ok, check, listen_sync, failure_kind?, reason?}. A check that failed is still an answer, not an error: ok false with failure_kind and reason. Filtering must be started on the connection. ${SYNC_WORDS} ${CHECK_WORDS}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+        check_id: { type: 'string', description: 'Optional: the check id this retries.' },
+      },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_hold_get',
+    description:
+      "Read the holding switch of one connection: whether matches are kept ready for the next AI session on this mailbox. The account owner only. Returns {connection_id, hold}. Off (false) is the default.",
+    inputSchema: {
+      type: 'object',
+      properties: { connection_id: { type: 'string', description: 'Connection uuid.' } },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_hold_set',
+    description:
+      `Turn the holding switch of one connection on or off: whether matches are kept ready for the next AI session on this mailbox. The account owner only; anyone else is refused. Off (the default) means nothing is kept. On means only matches are kept, until read, and never longer than a week. Until filtering is started only the setting is saved. Returns {connection_id, hold, listen_sync}. ${SYNC_WORDS}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+        hold: { type: 'boolean', description: 'true = keep matches ready; false = keep nothing.' },
+      },
+      required: ['connection_id', 'hold'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Args = Record<string, unknown>;
@@ -869,6 +939,26 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', filterPath(a), 'PUT', body(a, ['file', 'base_version', 'lists_fingerprint']))),
   lsp_spaces_filter_versions: handler('lsp_spaces_filter_versions', ['space_tenant_id', 'connection_id'], (a) =>
     call('spaces', `${filterPath(a)}/versions`, 'GET')),
+  // -- ClaudeCode 2026-11-13 (checks tools): one call each, Spaces' answer as is (a retry's ok:false is a 200, so data).
+  lsp_spaces_checks_list: async (raw) => {
+    const a = checked('lsp_spaces_checks_list', raw, []);
+    if (a instanceof Error) return errText(a);
+    const has = (k: string) => typeof a[k] === 'string' && !!(a[k] as string).trim();
+    if (has('connection_id') === has('space_tenant_id')) {
+      return errText(new Error('Give exactly one of connection_id or space_tenant_id.'));
+    }
+    const limit = qs({ limit: typeof a.limit === 'number' ? String(a.limit) : a.limit });
+    const path = has('connection_id')
+      ? `/v1/connections/${enc(a.connection_id)}/checks${limit}`
+      : `/v1/spaces/${enc(a.space_tenant_id)}/checks${limit}`;
+    return okText(await call('spaces', path, 'GET'));
+  },
+  lsp_spaces_checks_retry: handler('lsp_spaces_checks_retry', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${enc(a.connection_id)}/checks/retry`, 'POST', body(a, ['check_id']))),
+  lsp_spaces_hold_get: handler('lsp_spaces_hold_get', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${enc(a.connection_id)}/hold`, 'GET')),
+  lsp_spaces_hold_set: handler('lsp_spaces_hold_set', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${enc(a.connection_id)}/hold`, 'PUT', body(a, ['hold']))),
 };
 
 function filterPath(a: Args): string {

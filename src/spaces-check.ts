@@ -40,7 +40,7 @@ const ID = '00000000-0000-4000-8000-000000000004';
 
 // (1) shape
 const spacesTools = spaces.tools.filter((t) => t.name.startsWith('lsp_spaces_'));
-assert('spaces module exposes 42 lsp_spaces_* tools', spacesTools.length === 42, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (filter tools): +filter_get/put/versions (was 39) // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
+assert('spaces module exposes 46 lsp_spaces_* tools', spacesTools.length === 46, String(spacesTools.length)); // -- ClaudeCode 2026-11-13 (checks tools): +checks_list/retry, +hold_get/set (was 42) // -- ClaudeCode 2026-11-13 (filter tools): +filter_get/put/versions (was 39) // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter): +sorting_start/stop, +runs_list/compare (was 35) // -- ClaudeCode 2026-11-13 (topics): +4 topic tools (was 31) // -- ClaudeCode 2026-11-13 (add a Space): +space_add, +space_rename (was 29)
 for (const t of spaces.tools) {
   assert(`${t.name}: name/description/inputSchema/handler`,
     t.name.startsWith('lsp_spaces_') && t.description.length > 20
@@ -143,6 +143,15 @@ const cases: Array<[string, Record<string, unknown>, string, string, unknown]> =
     'PUT', `/v1/spaces/${S}/connections/${C}/filter`, { file: { keywords: ['ZZ-FIXTURE word'], sender_domains: [] }, base_version: 3, lists_fingerprint: 'ZZ-FIXTURE-fp' }],
   ['lsp_spaces_filter_put', { space_tenant_id: S, connection_id: C, file: { keywords: ['ZZ-FIXTURE word'] } },
     'PUT', `/v1/spaces/${S}/connections/${C}/filter`, { file: { keywords: ['ZZ-FIXTURE word'] } }],
+  // -- ClaudeCode 2026-11-13 (checks tools):
+  ['lsp_spaces_checks_list', { connection_id: C }, 'GET', `/v1/connections/${C}/checks`, undefined],
+  ['lsp_spaces_checks_list', { connection_id: C, limit: 5 }, 'GET', `/v1/connections/${C}/checks?limit=5`, undefined],
+  ['lsp_spaces_checks_list', { space_tenant_id: S, limit: 7 }, 'GET', `/v1/spaces/${S}/checks?limit=7`, undefined],
+  ['lsp_spaces_checks_retry', { connection_id: C }, 'POST', `/v1/connections/${C}/checks/retry`, {}],
+  ['lsp_spaces_checks_retry', { connection_id: C, check_id: ID }, 'POST', `/v1/connections/${C}/checks/retry`, { check_id: ID }],
+  ['lsp_spaces_hold_get', { connection_id: C }, 'GET', `/v1/connections/${C}/hold`, undefined],
+  ['lsp_spaces_hold_set', { connection_id: C, hold: true }, 'PUT', `/v1/connections/${C}/hold`, { hold: true }],
+  ['lsp_spaces_hold_set', { connection_id: C, hold: false }, 'PUT', `/v1/connections/${C}/hold`, { hold: false }],
 ];
 for (const [tool, args, method, path, body] of cases) {
   const before = calls.length;
@@ -300,6 +309,51 @@ assert('sorter descriptions name no mailbox and give no example', !/mailbox/i.te
     'no paid AI is called',
   ]) assert(`filter_put says: ${line}`, pd.includes(line));
   assert('filter descriptions give no example and name no mailbox', !/for example|e\.g\.|mailbox/i.test(fd));
+}
+// -- ClaudeCode 2026-11-13 (checks tools): the one-of rule, a failed retry as data, a 409 passed through, the words.
+{
+  const n0 = calls.length;
+  const both = await spaces.handlers.lsp_spaces_checks_list({ connection_id: C, space_tenant_id: S });
+  const neither = await spaces.handlers.lsp_spaces_checks_list({ limit: 5 });
+  assert('checks_list: both or neither of connection_id / space_tenant_id is a plain error with no request',
+    !!both.isError && !!neither.isError && calls.length === n0 && both.content[0].text.includes('exactly one of connection_id or space_tenant_id'));
+
+  const shown = { connection_id: C, checks: [{ check_id: ID, at: '2026-11-13T00:00:00Z', finished_at: null, ok: true, failure_kind: null, reason: null, more_waiting: true, held: 0, matches: [{ space_id: S, space_name: 'ZZ-FIXTURE', count: 2 }] }] };
+  queued.push({ status: 200, body: shown });
+  const listed = await spaces.handlers.lsp_spaces_checks_list({ connection_id: C });
+  assert('checks_list returns Spaces\' answer as is', !listed.isError && JSON.stringify(JSON.parse(listed.content[0].text)) === JSON.stringify(shown));
+
+  const failedCheck = { ok: false, check: null, failure_kind: 'signin', reason: 'The mailbox needs reconnecting.', listen_sync: 'pending' };
+  queued.push({ status: 200, body: failedCheck });
+  const retried = await spaces.handlers.lsp_spaces_checks_retry({ connection_id: C });
+  assert('checks_retry: a 200 with ok:false is returned as data, not an error',
+    !retried.isError && JSON.stringify(JSON.parse(retried.content[0].text)) === JSON.stringify(failedCheck));
+
+  const n1 = calls.length;
+  queued.push({ status: 409, body: { error: 'ZZ-FIXTURE conflict.' } });
+  let conflict = '';
+  try { await spaces.handlers.lsp_spaces_hold_set({ connection_id: C, hold: true }); } catch (e) { conflict = String(e); }
+  assert('hold_set: a 409 is passed through, one request, no retry', conflict.includes('409') && conflict.includes('ZZ-FIXTURE conflict.') && calls.length === n1 + 1);
+  queued.push({ status: 409, body: { error: 'ZZ-FIXTURE conflict.' } });
+  let conflict2 = '';
+  try { await spaces.handlers.lsp_spaces_checks_retry({ connection_id: C }); } catch (e) { conflict2 = String(e); }
+  assert('checks_retry: a 409 is passed through, one request, no retry', conflict2.includes('409') && calls.length === n1 + 2);
+
+  const names = ['lsp_spaces_checks_list', 'lsp_spaces_checks_retry', 'lsp_spaces_hold_get', 'lsp_spaces_hold_set'];
+  const cd = names.map(desc).join(' ');
+  assert('checks/hold descriptions carry no sort/sorter/runner/judged words', !/\bsort(ing|er|ed|s)?\b|sorter|runner|judged/i.test(cd));
+  assert('checks/hold descriptions give no example', !/for example|e\.g\./i.test(cd));
+  for (const n of ['lsp_spaces_checks_list', 'lsp_spaces_checks_retry']) {
+    assert(`${n} says what a check is (metadata only)`, desc(n).includes("Listen looking at the mailbox for what each Space's filter matches") && desc(n).includes('metadata only: sender, subject and date'));
+    assert(`${n} says what more_waiting means`, desc(n).includes('more mail is waiting, and the next check continues'));
+    assert(`${n} says what "Needs reconnecting" means`, desc(n).includes('The mailbox needs reconnecting.'));
+  }
+  for (const n of ['lsp_spaces_checks_retry', 'lsp_spaces_hold_set']) {
+    assert(`${n} says what listen_sync pending/queued means`, desc(n).includes("'pending' or 'queued' means the change is saved and reaches the mailbox service with the next change or a Retry"));
+  }
+  assert('checks_retry says it re-sends pending filter changes first', desc('lsp_spaces_checks_retry').includes('first re-sends any pending filter changes, then runs a check now'));
+  assert('hold_set says off keeps nothing, on keeps only matches up to a week',
+    desc('lsp_spaces_hold_set').includes('Off (the default) means nothing is kept') && desc('lsp_spaces_hold_set').includes('only matches are kept, until read, and never longer than a week'));
 }
 const covered = new Set(cases.map((c) => c[0]));
 assert('every tool has a route case', spaces.tools.every((t) => covered.has(t.name)));
