@@ -33,6 +33,11 @@
 // -- ClaudeCode 2026-11-13 (add a Space): 12:20 PM PDT
 //   POST  /v1/spaces                        — add a Space (owner admin sign-in only)
 //   PATCH /v1/spaces/:id                    — rename a Space (name only)
+// -- ClaudeCode 2026-11-13 (checks tools):
+//   GET   /v1/connections/:id/checks?limit= — the checks on one connection (customer)
+//   GET   /v1/spaces/:space/checks?limit=   — one Space's own counts only
+//   POST  /v1/connections/:id/checks/retry  — body {check_id?} (owner)
+//   GET · PUT /v1/connections/:id/hold      — body {hold} (PUT: owner)
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText, errText } from '../client.js';
 
@@ -94,11 +99,22 @@ const FIELDS: Record<string, string[]> = {
   lsp_spaces_filter_get: ['space_tenant_id', 'connection_id', 'version'],
   lsp_spaces_filter_put: ['space_tenant_id', 'connection_id', 'file', 'base_version', 'lists_fingerprint'],
   lsp_spaces_filter_versions: ['space_tenant_id', 'connection_id'],
+  // -- ClaudeCode 2026-11-13 (checks tools):
+  lsp_spaces_checks_list: ['connection_id', 'space_tenant_id', 'limit'],
+  lsp_spaces_checks_retry: ['connection_id', 'check_id'],
+  lsp_spaces_hold_get: ['connection_id'],
+  lsp_spaces_hold_set: ['connection_id', 'hold'],
 };
 
 // -- ClaudeCode 2026-11-13 (filter tools): the filter file's parts, named once for the three descriptions.
 const FILTER_PARTS =
   "The filter file is one JSON file per Space per connection, kept in the cloud and versioned. The account owner's own Claude session writes this file from the Space's look-for text; no paid AI is called. Its parts: keywords (words or phrases to look for); keywords_skip_categories (any of primary, social, promotions, updates, forums); sender_domains and sender_addresses (senders whose mail always comes here); sender_domain_blacklist and sender_address_blacklist (senders whose mail never comes here); priority_vs_noise {priority, noise} (plain notes on what matters and what does not); learn {auto_add_sender_after_hits, suggest_permanent_after_hits, correction_becomes_rule}. The four sender lists are shared by every connection of the Space.";
+
+// -- ClaudeCode 2026-11-13 (checks tools): what a check is, said once for the four descriptions.
+const CHECK_WORDS =
+  "A check is Listen looking at the mailbox for what each Space's filter matches. It reads metadata only: sender, subject and date. more_waiting true means more mail is waiting, and the next check continues. A failed check carries failure_kind and a plain reason; \"The mailbox needs reconnecting.\" (failure_kind signin) means the mailbox sign-in no longer works, and a person must connect it again (lsp_spaces_connect_start) before checks can run.";
+const SYNC_WORDS =
+  "A listen_sync of 'pending' or 'queued' means the change is saved and reaches the mailbox service with the next change or a Retry (lsp_spaces_checks_retry).";
 
 export const tools: ToolDef[] = [
   {
@@ -708,6 +724,60 @@ export const tools: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // -- ClaudeCode 2026-11-13 (checks tools): checks, retry and the holding switch.
+  {
+    name: 'lsp_spaces_checks_list',
+    description:
+      `The checks Listen ran, newest first. Give exactly ONE of connection_id or space_tenant_id. connection_id: every check on that connection, with each Space's match count; the account owner only. Returns {connection_id, checks:[{check_id, at, finished_at, ok, failure_kind, reason, more_waiting, held, matches:[{space_id, space_name, count}]}], note?}. space_tenant_id: the checks on every connection that Space may use, with ONLY that Space's own count; the account owner or a seat on that Space. Returns {space_id, checks:[{at, connection:{id, label}, ok, failure_kind, reason, more_waiting, held, count}], note?}. When filtering is not started, checks is empty and note says why. limit 1 to 100, default 20. Returns Spaces' answer as is. ${CHECK_WORDS}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: { type: 'string', description: 'Connection uuid. Give this or space_tenant_id, not both.' },
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid. Give this or connection_id, not both.' },
+        limit: { type: 'number', description: 'Optional number of checks, 1 to 100 (default 20).' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_checks_retry',
+    description:
+      `Retry on one connection: it first re-sends any pending filter changes, then runs a check now. The account owner only; anyone else is refused. check_id is optional: the failed check this one retries. Returns {ok, check, listen_sync, failure_kind?, reason?}. A check that failed is still an answer, not an error: ok false with failure_kind and reason. Filtering must be started on the connection. ${SYNC_WORDS} ${CHECK_WORDS}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+        check_id: { type: 'string', description: 'Optional: the check id this retries.' },
+      },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_hold_get',
+    description:
+      "Read the holding switch of one connection: whether matches are kept ready for the next AI session on this mailbox. The account owner only. Returns {connection_id, hold}. Off (false) is the default.",
+    inputSchema: {
+      type: 'object',
+      properties: { connection_id: { type: 'string', description: 'Connection uuid.' } },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_hold_set',
+    description:
+      `Turn the holding switch of one connection on or off: whether matches are kept ready for the next AI session on this mailbox. The account owner only; anyone else is refused. Off (the default) means nothing is kept. On means only matches are kept, until read, and never longer than a week. Until filtering is started only the setting is saved. Returns {connection_id, hold, listen_sync}. ${SYNC_WORDS}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+        hold: { type: 'boolean', description: 'true = keep matches ready; false = keep nothing.' },
+      },
+      required: ['connection_id', 'hold'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type Args = Record<string, unknown>;
@@ -723,6 +793,8 @@ function checked(tool: string, raw: unknown, pathIds: string[]): Args | Error {
   }
   for (const k of pathIds) {
     if (typeof args[k] !== 'string' || !(args[k] as string).trim()) return new Error(`${k} is required (string).`);
+    // -- ClaudeCode 2026-11-13 (path ids): a path id must be a uuid; refused before any request.
+    if (!isUuid(args[k])) return new Error(`${k} must be a uuid.`);
   }
   return args;
 }
@@ -740,7 +812,25 @@ function qs(pairs: Record<string, unknown>): string {
   return s ? `?${s}` : '';
 }
 
-const enc = (v: unknown) => encodeURIComponent(String(v));
+// -- ClaudeCode 2026-11-13 (path ids): every value put into a Spaces path is checked BEFORE any
+// request. Ids must be uuids (so '..' or '/' can never change the route); the settings key is a
+// plain word; a filter version is a positive whole number.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const KEY_RE = /^[a-z][a-z0-9_]{0,63}$/;
+export function isUuid(v: unknown): v is string { return typeof v === 'string' && UUID_RE.test(v); }
+const encId = (name: string, v: unknown): string => {
+  if (!isUuid(v)) throw new Error(`${name} must be a uuid.`);
+  return v;
+};
+const encKey = (v: unknown): string => {
+  if (typeof v !== 'string' || !KEY_RE.test(v)) throw new Error('key must be a plain setting name (letters, digits, _).');
+  return v;
+};
+const encInt = (name: string, v: unknown): string => {
+  const n = typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v;
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) throw new Error(`${name} must be a whole number of 1 or more.`);
+  return String(n);
+};
 
 type Run = (a: Args) => Promise<unknown>;
 
@@ -754,19 +844,19 @@ function handler(tool: string, pathIds: string[], run: Run): ToolHandler {
 
 export const handlers: Record<string, ToolHandler> = {
   lsp_spaces_settings_get: handler('lsp_spaces_settings_get', ['tenant_id'], (a) =>
-    call('spaces', `/v1/settings/${enc(a.tenant_id)}${a.key ? `/${enc(a.key)}` : ''}`, 'GET')),
+    call('spaces', `/v1/settings/${encId('tenant_id', a.tenant_id)}${a.key ? `/${encKey(a.key)}` : ''}`, 'GET')),
   lsp_spaces_settings_set: handler('lsp_spaces_settings_set', ['tenant_id'], (a) =>
-    call('spaces', `/v1/settings/${enc(a.tenant_id)}`, 'PUT', body(a, ['key', 'value']))),
+    call('spaces', `/v1/settings/${encId('tenant_id', a.tenant_id)}`, 'PUT', body(a, ['key', 'value']))),
   lsp_spaces_connections_list: handler('lsp_spaces_connections_list', ['tenant_id'], (a) =>
     call('spaces', `/v1/connections${qs({ tenantId: a.tenant_id })}`, 'GET')),
   lsp_spaces_connection_add: handler('lsp_spaces_connection_add', [], (a) =>
     call('spaces', '/v1/connections', 'POST', body(a, FIELDS.lsp_spaces_connection_add))),
   lsp_spaces_connection_update: handler('lsp_spaces_connection_update', ['id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.id)}`, 'PATCH', body(a, ['tenant_id', 'label', 'access', 'status']))),
+    call('spaces', `/v1/connections/${encId('id', a.id)}`, 'PATCH', body(a, ['tenant_id', 'label', 'access', 'status']))),
   lsp_spaces_space_connections: handler('lsp_spaces_space_connections', ['space_tenant_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_tenant_id)}/connections`, 'GET')),
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/connections`, 'GET')),
   lsp_spaces_allow_set: handler('lsp_spaces_allow_set', ['space_tenant_id', 'connection_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_tenant_id)}/allow/${enc(a.connection_id)}`, 'PUT', body(a, ['mode']))),
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/allow/${encId('connection_id', a.connection_id)}`, 'PUT', body(a, ['mode']))),
   lsp_spaces_placements_list: handler('lsp_spaces_placements_list', [], (a) =>
     call('spaces', `/v1/placements${qs({
       scope: a.scope,
@@ -783,35 +873,35 @@ export const handlers: Record<string, ToolHandler> = {
   lsp_spaces_sender_rules_add: handler('lsp_spaces_sender_rules_add', [], (a) =>
     call('spaces', '/v1/sender-rules', 'POST', body(a, FIELDS.lsp_spaces_sender_rules_add))),
   lsp_spaces_sender_rules_update: handler('lsp_spaces_sender_rules_update', ['id'], (a) =>
-    call('spaces', `/v1/sender-rules/${enc(a.id)}`, 'PATCH', body(a, ['mode', 'state', 'hits']))),
+    call('spaces', `/v1/sender-rules/${encId('id', a.id)}`, 'PATCH', body(a, ['mode', 'state', 'hits']))),
   lsp_spaces_world_list: handler('lsp_spaces_world_list', ['tenant_id'], (a) =>
     call('spaces', `/v1/world${qs({ tenantId: a.tenant_id })}`, 'GET')),
   lsp_spaces_world_add: handler('lsp_spaces_world_add', [], (a) =>
     call('spaces', '/v1/world', 'POST', body(a, FIELDS.lsp_spaces_world_add))),
   lsp_spaces_world_update: handler('lsp_spaces_world_update', ['id'], (a) =>
-    call('spaces', `/v1/world/${enc(a.id)}`, 'PATCH', body(a, ['space_tenant_ids', 'note']))),
+    call('spaces', `/v1/world/${encId('id', a.id)}`, 'PATCH', body(a, ['space_tenant_ids', 'note']))),
   lsp_spaces_holds_list: handler('lsp_spaces_holds_list', ['tenant_id'], (a) =>
     call('spaces', `/v1/holds${qs({ tenantId: a.tenant_id })}`, 'GET')),
   lsp_spaces_holds_add: handler('lsp_spaces_holds_add', [], (a) =>
     call('spaces', '/v1/holds', 'POST', body(a, FIELDS.lsp_spaces_holds_add))),
   lsp_spaces_holds_answer: handler('lsp_spaces_holds_answer', ['id'], (a) =>
-    call('spaces', `/v1/holds/${enc(a.id)}/answer`, 'POST', body(a, ['answer']))),
+    call('spaces', `/v1/holds/${encId('id', a.id)}/answer`, 'POST', body(a, ['answer']))),
   // -- ClaudeCode 2026-11-12 (dashboard parity):
   lsp_spaces_me: handler('lsp_spaces_me', [], () => call('spaces', '/v1/me', 'GET')),
   lsp_spaces_overview: handler('lsp_spaces_overview', [], (a) =>
     call('spaces', `/v1/overview${qs({ scope: a.scope, spaces: a.space, topic: a.topic })}`, 'GET')),
   lsp_spaces_connection_spaces: handler('lsp_spaces_connection_spaces', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/spaces`, 'GET')),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/spaces`, 'GET')),
   lsp_spaces_connection_wants_set: handler('lsp_spaces_connection_wants_set', ['space_tenant_id', 'connection_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_tenant_id)}/connections/${enc(a.connection_id)}/wants`, 'PUT', body(a, ['text']))),
+    call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/connections/${encId('connection_id', a.connection_id)}/wants`, 'PUT', body(a, ['text']))),
   lsp_spaces_connect: handler('lsp_spaces_connect', ['tenant_id'], (a) =>
     call('spaces', '/v1/connections/connect', 'POST', { ...body(a, ['tenant_id', 'label', 'return_to']), kind: 'mail' })),
   lsp_spaces_connect_start: handler('lsp_spaces_connect_start', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/connect/start`, 'POST', body(a, ['return_to']))),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/connect/start`, 'POST', body(a, ['return_to']))),
   lsp_spaces_connect_finish: handler('lsp_spaces_connect_finish', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/connect/finish`, 'POST', {})),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/connect/finish`, 'POST', {})),
   lsp_spaces_connect_status: handler('lsp_spaces_connect_status', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/status`, 'GET')),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/status`, 'GET')),
   lsp_spaces_read_put: handler('lsp_spaces_read_put', ['tenant_id'], (a) =>
     call('spaces', '/v1/reads', 'PUT', body(a, FIELDS.lsp_spaces_read_put))),
   // -- ClaudeCode 2026-11-13 (problems):
@@ -823,29 +913,29 @@ export const handlers: Record<string, ToolHandler> = {
   lsp_spaces_space_add: handler('lsp_spaces_space_add', [], (a) =>
     call('spaces', '/v1/spaces', 'POST', body(a, ['name']))),
   lsp_spaces_space_rename: handler('lsp_spaces_space_rename', ['space_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_id)}`, 'PATCH', body(a, ['name']))),
+    call('spaces', `/v1/spaces/${encId('space_id', a.space_id)}`, 'PATCH', body(a, ['name']))),
   // -- ClaudeCode 2026-11-13 (topics):
   lsp_spaces_topics_list: handler('lsp_spaces_topics_list', ['space_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_id)}/topics`, 'GET')),
+    call('spaces', `/v1/spaces/${encId('space_id', a.space_id)}/topics`, 'GET')),
   lsp_spaces_topic_add: handler('lsp_spaces_topic_add', ['space_id'], (a) =>
-    call('spaces', `/v1/spaces/${enc(a.space_id)}/topics`, 'POST', body(a, ['name', 'wants', 'connection_ids']))),
+    call('spaces', `/v1/spaces/${encId('space_id', a.space_id)}/topics`, 'POST', body(a, ['name', 'wants', 'connection_ids']))),
   lsp_spaces_topic_update: handler('lsp_spaces_topic_update', ['topic_id'], (a) =>
-    call('spaces', `/v1/topics/${enc(a.topic_id)}`, 'PATCH', body(a, ['name', 'wants', 'connection_ids', 'position']))),
+    call('spaces', `/v1/topics/${encId('topic_id', a.topic_id)}`, 'PATCH', body(a, ['name', 'wants', 'connection_ids', 'position']))),
   lsp_spaces_topic_remove: handler('lsp_spaces_topic_remove', ['topic_id'], (a) =>
-    call('spaces', `/v1/topics/${enc(a.topic_id)}`, 'DELETE')),
+    call('spaces', `/v1/topics/${encId('topic_id', a.topic_id)}`, 'DELETE')),
   // -- ClaudeCode 2026-11-13 12:53 PM PDT (sorter):
   lsp_spaces_sorting_start: handler('lsp_spaces_sorting_start', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/sorting/start`, 'POST', {})),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/sorting/start`, 'POST', {})),
   lsp_spaces_sorting_stop: handler('lsp_spaces_sorting_stop', ['connection_id'], (a) =>
-    call('spaces', `/v1/connections/${enc(a.connection_id)}/sorting/stop`, 'POST', {})),
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/sorting/stop`, 'POST', {})),
   lsp_spaces_runs_list: handler('lsp_spaces_runs_list', ['connection_id'], (a) =>
     call('spaces', `/v1/runs${qs({ connection_id: a.connection_id, limit: typeof a.limit === 'number' ? String(a.limit) : a.limit })}`, 'GET')),
   lsp_spaces_runs_compare: handler('lsp_spaces_runs_compare', ['run_id', 'other_run_id'], (a) =>
-    call('spaces', `/v1/runs/${enc(a.run_id)}/compare/${enc(a.other_run_id)}`, 'GET')),
+    call('spaces', `/v1/runs/${encId('run_id', a.run_id)}/compare/${encId('other_run_id', a.other_run_id)}`, 'GET')),
   // -- ClaudeCode 2026-11-13 (filter tools): one call each; no retry. The current GET's
   // 404 that carries lists_fingerprint is the "no filter yet" answer, not an error.
   lsp_spaces_filter_get: handler('lsp_spaces_filter_get', ['space_tenant_id', 'connection_id'], async (a) => {
-    const path = `${filterPath(a)}${a.version !== undefined ? `/versions/${enc(a.version)}` : ''}`;
+    const path = `${filterPath(a)}${a.version !== undefined ? `/versions/${encInt('version', a.version)}` : ''}`;
     try {
       return await call('spaces', path, 'GET');
     } catch (e) {
@@ -869,8 +959,31 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', filterPath(a), 'PUT', body(a, ['file', 'base_version', 'lists_fingerprint']))),
   lsp_spaces_filter_versions: handler('lsp_spaces_filter_versions', ['space_tenant_id', 'connection_id'], (a) =>
     call('spaces', `${filterPath(a)}/versions`, 'GET')),
+  // -- ClaudeCode 2026-11-13 (checks tools): one call each, Spaces' answer as is (a retry's ok:false is a 200, so data).
+  lsp_spaces_checks_list: async (raw) => {
+    const a = checked('lsp_spaces_checks_list', raw, []);
+    if (a instanceof Error) return errText(a);
+    const has = (k: string) => typeof a[k] === 'string' && !!(a[k] as string).trim();
+    if (has('connection_id') === has('space_tenant_id')) {
+      return errText(new Error('Give exactly one of connection_id or space_tenant_id.'));
+    }
+    const limit = qs({ limit: typeof a.limit === 'number' ? String(a.limit) : a.limit });
+    const path = has('connection_id')
+      ? `/v1/connections/${encId('connection_id', a.connection_id)}/checks${limit}`
+      : `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/checks${limit}`;
+    return okText(await call('spaces', path, 'GET'));
+  },
+  lsp_spaces_checks_retry: handler('lsp_spaces_checks_retry', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/checks/retry`, 'POST', body(a, ['check_id']))),
+  lsp_spaces_hold_get: handler('lsp_spaces_hold_get', ['connection_id'], (a) =>
+    call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/hold`, 'GET')),
+  lsp_spaces_hold_set: handler('lsp_spaces_hold_set', ['connection_id'], (a) => {
+    // -- ClaudeCode 2026-11-13 (path ids): hold must be true or false; refused before any request.
+    if (typeof a.hold !== 'boolean') throw new Error('hold must be true or false.');
+    return call('spaces', `/v1/connections/${encId('connection_id', a.connection_id)}/hold`, 'PUT', body(a, ['hold']));
+  }),
 };
 
 function filterPath(a: Args): string {
-  return `/v1/spaces/${enc(a.space_tenant_id)}/connections/${enc(a.connection_id)}/filter`;
+  return `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/connections/${encId('connection_id', a.connection_id)}/filter`;
 }
