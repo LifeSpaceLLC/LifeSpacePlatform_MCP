@@ -146,6 +146,9 @@ const FIELDS: Record<string, string[]> = {
   // -- ClaudeCode 2026-11-14 (step 7 setup):
   lsp_spaces_cos_start: [],
   lsp_spaces_cos_space_brief: ['space_tenant_id'],
+  // -- ClaudeCode 2026-11-15 (catch-up):
+  lsp_spaces_catchup_start: ['space_tenant_id', 'connection_id', 'days'],
+  lsp_spaces_catchup_reported: ['catchup_id'],
 };
 
 // -- ClaudeCode 2026-11-13 (filter tools): the filter file's parts, named once for the three descriptions.
@@ -1126,8 +1129,35 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_spaces_cos_start',
     description:
-      "Run this first when you start as someone's Chief of Staff; follow the routine it returns. The account owner's own sign-in only. Returns the routine as plain numbered steps from the service, then {routine_version, name_hint, spaces:[{space_tenant_id, name, filtering, sweep_due}]} as JSON. If a later session sees a newer routine_version, follow the newer one.",
+      "Run this first when you start as someone's Chief of Staff; follow the routine it returns. The account owner's own sign-in only. Returns the routine as plain numbered steps from the service, then {routine_version, name_hint, spaces:[{space_tenant_id, name, filtering, sweep_due}], catchups:[{catchup_id, space_tenant_id, connection_id, state, days, stored}]} as JSON. If a later session sees a newer routine_version, follow the newer one.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  // -- ClaudeCode 2026-11-15 (catch-up): look back over a Space's older mail, and mark a look back reported.
+  {
+    name: 'lsp_spaces_catchup_start',
+    description:
+      "Look back over older mail for one Space in one mailbox: the mailbox service files that Space's matches from the last days given, the same way new mail is filed. The account owner's own action, under their own sign-in. Needs the Space to be allowed that mailbox, a filter for it, filtering on and keeping matches on. One at a time per Space and mailbox: while one is running the answer is \"A catch-up is already running.\" At most 25 full-text reads are spent on what one look back brings in. Returns {id, space_tenant_id, connection_id, days, after_sec, until_sec, state, stored, created_at, finished_at}; state starts as due, then open, then done.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'Space tenant uuid.' },
+        connection_id: { type: 'string', description: 'Connection uuid.' },
+        days: { type: 'integer', minimum: 1, maximum: 90, description: 'How many days back, 1 to 90.' },
+      },
+      required: ['space_tenant_id', 'connection_id', 'days'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'lsp_spaces_catchup_reported',
+    description:
+      "Mark one look back as reported to the person, after you have told them what it found; it is then no longer listed by lsp_spaces_cos_start. Only for one in state done or closed; one still running is refused with \"This catch-up is still running.\" The account owner's own sign-in only. Take catchup_id from lsp_spaces_cos_start. Returns {catchup_id, state, reported_at}.",
+    inputSchema: {
+      type: 'object',
+      properties: { catchup_id: { type: 'string', description: 'Catch-up uuid, from lsp_spaces_cos_start.' } },
+      required: ['catchup_id'],
+      additionalProperties: false,
+    },
   },
   {
     name: 'lsp_spaces_cos_space_brief',
@@ -1480,6 +1510,13 @@ export const handlers: Record<string, ToolHandler> = {
     call('spaces', '/v1/cos/start', 'GET')),
   lsp_spaces_cos_space_brief: routineHandler('lsp_spaces_cos_space_brief', ['space_tenant_id'], (a) =>
     call('spaces', `/v1/cos/space-brief/${encId('space_tenant_id', a.space_tenant_id)}`, 'GET')),
+  // -- ClaudeCode 2026-11-15 (catch-up): one call each, Spaces' answer as is.
+  lsp_spaces_catchup_start: handler('lsp_spaces_catchup_start', ['space_tenant_id', 'connection_id'], (a) => {
+    if (typeof a.days !== 'number' || !Number.isInteger(a.days) || a.days < 1 || a.days > 90) throw new Error('days must be a whole number from 1 to 90.');
+    return call('spaces', `/v1/spaces/${encId('space_tenant_id', a.space_tenant_id)}/connections/${encId('connection_id', a.connection_id)}/catch-up`, 'POST', { days: a.days });
+  }),
+  lsp_spaces_catchup_reported: handler('lsp_spaces_catchup_reported', ['catchup_id'], (a) =>
+    call('spaces', `/v1/catchups/${encId('catchup_id', a.catchup_id)}/reported`, 'POST', {})),
 };
 
 // -- ClaudeCode 2026-11-14 (step 5 sweep): input-shape checks before any request. The service checks again.
