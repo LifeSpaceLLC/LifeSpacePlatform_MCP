@@ -6,7 +6,8 @@
 // error and makes no request; (5) under the Connect request context (the
 // caller's Trust JWT bound via AsyncLocalStorage) the header still reaches the
 // downstream request alongside that JWT; (6) an API-key sign-in is refused a
-// tenant_id (Memory's key path ignores the header).
+// tenant_id (Memory's key path ignores the header); (7) update/forget refuse a
+// non-uuid memory id before it reaches the URL.
 // Run: npx tsx src/memory-check.ts
 export {}; // module marker for top-level await (no static imports: env must be set first)
 delete process.env.LSP_TOKEN;
@@ -102,6 +103,23 @@ await requestContext.run({ bearer: CALLER_JWT }, async () => {
     }
     assert(`bad tenant_id ${JSON.stringify(bad)} → plain error, no request`,
       msg === 'tenant_id must be a tenant id (a uuid).' && calls.length === 0, msg);
+  }
+});
+
+// (7) review L5: a non-uuid memory id never reaches the URL
+await requestContext.run({ bearer: CALLER_JWT }, async () => {
+  for (const n of ['lsp_memory_update', 'lsp_memory_forget']) {
+    for (const bad of ['../stats', 'abc', 7, undefined, `${MEM}/x`]) {
+      calls.length = 0;
+      let msg = '';
+      try {
+        await memory.handlers[n]({ id: bad, body: 'x' });
+      } catch (err) {
+        msg = err instanceof Error ? err.message : String(err);
+      }
+      assert(`${n}: bad id ${JSON.stringify(bad)} → plain error, no request`,
+        msg === 'id must be a memory id (a uuid).' && calls.length === 0, msg);
+    }
   }
 });
 

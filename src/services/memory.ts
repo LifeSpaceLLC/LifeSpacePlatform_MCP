@@ -159,6 +159,13 @@ export const tools: ToolDef[] = [
   },
 ];
 
+// -- ClaudeCode 2026-11-15 (space facts) review L5: the memory id goes into the
+// URL path, so it must be a uuid before it is used there.
+function memoryId(v: unknown): string {
+  if (typeof v !== 'string' || !UUID_RE.test(v)) throw new Error('id must be a memory id (a uuid).');
+  return v;
+}
+
 export const handlers: Record<string, ToolHandler> = {
   // -- ClaudeCode 2026-11-15 (space facts): every handler strips tenant_id from
   // the body and sends it as X-Tenant-Id through call()'s extraHeaders.
@@ -172,12 +179,13 @@ export const handlers: Record<string, ToolHandler> = {
   },
   lsp_memory_update: async (args) => {
     const { rest: all, headers } = tenantHeaders(args);
-    const { id, ...rest } = all;
+    const { id: rawId, ...rest } = all;
+    const id = memoryId(rawId);
     return okText(await call('memory', `/v1/memories/${id}`, 'PUT', rest, headers));
   },
   lsp_memory_forget: async (args) => {
     const { rest, headers } = tenantHeaders(args);
-    const { id } = rest as { id: string };
+    const id = memoryId(rest.id);
     await call('memory', `/v1/memories/${id}`, 'DELETE', undefined, headers);
     return okText({ ok: true, id, forgotten: true });
   },
