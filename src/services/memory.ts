@@ -23,6 +23,12 @@ export const tools: ToolDef[] = [
         tags: { type: 'array', items: { type: 'string' } },
         applies_to: { type: 'array', items: { type: 'string' } },
         priority: { type: 'number' },
+        // -- ClaudeCode 2026-11-15 (memory expiry): optional expiry.
+        expires_at: {
+          type: 'string',
+          description:
+            'Optional. The last day this applies, as a date (YYYY-MM-DD; kept through the end of that day everywhere) or a datetime. Future only, at most 2 years.',
+        },
       },
       required: ['type', 'scope', 'body'],
     },
@@ -30,17 +36,27 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_memory_search',
     description:
-      "Search Memory for context relevant to a query. Use when the user asks 'what did I decide about X', 'recall Y', 'memory check', or when you need rules/preflights beyond what's auto-loaded.",
+      "Search Memory for context relevant to a query. Use when the user asks 'what did I decide about X', 'recall Y', 'memory check', or when you need rules/preflights beyond what's auto-loaded. query is optional: an empty or missing query returns all candidates for the filter.",
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string' },
+        // -- ClaudeCode 2026-11-15 (memory expiry): optional (not required).
+        query: {
+          type: 'string',
+          description: 'Optional keyword. Leave it out to get every memory that matches the context and types.',
+        },
         context: {
           type: 'object',
           properties: {
             repo: { type: 'string' },
             subtree: { type: 'string' },
             applies_to: { type: 'array', items: { type: 'string' } },
+            // -- ClaudeCode 2026-11-15 (memory expiry): only tagged rows.
+            applies_to_only: {
+              type: 'boolean',
+              description:
+                'Optional. When true, return only memories tagged with one of the applies_to values; memories with no applies_to are left out.',
+            },
           },
         },
         types: {
@@ -52,7 +68,6 @@ export const tools: ToolDef[] = [
         },
         top_k: { type: 'number' },
       },
-      required: ['query'],
     },
   },
   {
@@ -66,6 +81,12 @@ export const tools: ToolDef[] = [
         why: { type: 'string' },
         how_to_apply: { type: 'string' },
         priority: { type: 'number' },
+        // -- ClaudeCode 2026-11-15 (memory expiry): string sets it, null clears it.
+        expires_at: {
+          type: ['string', 'null'],
+          description:
+            'Optional. The last day this applies, as a date (YYYY-MM-DD; kept through the end of that day everywhere) or a datetime. Future only, at most 2 years. null clears it; leave it out to keep the current one.',
+        },
       },
       required: ['id'],
     },
