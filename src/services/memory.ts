@@ -23,6 +23,12 @@ export const tools: ToolDef[] = [
         tags: { type: 'array', items: { type: 'string' } },
         applies_to: { type: 'array', items: { type: 'string' } },
         priority: { type: 'number' },
+        // -- ClaudeCode 2026-11-15 (memory expiry): optional expiry.
+        expires_at: {
+          type: 'string',
+          description:
+            'Optional. When this memory stops applying, e.g. the day after a dated event. Future only, at most 2 years.',
+        },
       },
       required: ['type', 'scope', 'body'],
     },
@@ -41,6 +47,12 @@ export const tools: ToolDef[] = [
             repo: { type: 'string' },
             subtree: { type: 'string' },
             applies_to: { type: 'array', items: { type: 'string' } },
+            // -- ClaudeCode 2026-11-15 (memory expiry): only tagged rows.
+            applies_to_only: {
+              type: 'boolean',
+              description:
+                'Optional. When true, return only memories tagged with one of the applies_to values; memories with no applies_to are left out.',
+            },
           },
         },
         types: {
@@ -66,6 +78,12 @@ export const tools: ToolDef[] = [
         why: { type: 'string' },
         how_to_apply: { type: 'string' },
         priority: { type: 'number' },
+        // -- ClaudeCode 2026-11-15 (memory expiry): optional expiry.
+        expires_at: {
+          type: 'string',
+          description:
+            'Optional. When this memory stops applying, e.g. the day after a dated event. Future only, at most 2 years.',
+        },
       },
       required: ['id'],
     },
