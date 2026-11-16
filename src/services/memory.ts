@@ -27,7 +27,7 @@ export const tools: ToolDef[] = [
         expires_at: {
           type: 'string',
           description:
-            'Optional. When this memory stops applying, e.g. the day after a dated event. Future only, at most 2 years.',
+            'Optional. When this memory stops applying, e.g. the day after a dated event. ISO date (YYYY-MM-DD) or date and time; a date means through the end of that day everywhere. Future only, at most 2 years.',
         },
       },
       required: ['type', 'scope', 'body'],
@@ -36,11 +36,15 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_memory_search',
     description:
-      "Search Memory for context relevant to a query. Use when the user asks 'what did I decide about X', 'recall Y', 'memory check', or when you need rules/preflights beyond what's auto-loaded.",
+      "Search Memory for context relevant to a query. Use when the user asks 'what did I decide about X', 'recall Y', 'memory check', or when you need rules/preflights beyond what's auto-loaded. query is optional: an empty or missing query returns all candidates for the filter.",
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string' },
+        // -- ClaudeCode 2026-11-15 (memory expiry): optional (not required).
+        query: {
+          type: 'string',
+          description: 'Optional keyword. Leave it out to get every memory that matches the context and types.',
+        },
         context: {
           type: 'object',
           properties: {
@@ -64,7 +68,6 @@ export const tools: ToolDef[] = [
         },
         top_k: { type: 'number' },
       },
-      required: ['query'],
     },
   },
   {
@@ -78,11 +81,11 @@ export const tools: ToolDef[] = [
         why: { type: 'string' },
         how_to_apply: { type: 'string' },
         priority: { type: 'number' },
-        // -- ClaudeCode 2026-11-15 (memory expiry): optional expiry.
+        // -- ClaudeCode 2026-11-15 (memory expiry): string sets it, null clears it.
         expires_at: {
-          type: 'string',
+          type: ['string', 'null'],
           description:
-            'Optional. When this memory stops applying, e.g. the day after a dated event. Future only, at most 2 years.',
+            'Optional. When this memory stops applying, e.g. the day after a dated event. ISO date (YYYY-MM-DD) or date and time; a date means through the end of that day everywhere. Future only, at most 2 years. null clears it; leave it out to keep the current one.',
         },
       },
       required: ['id'],
