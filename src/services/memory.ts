@@ -27,7 +27,7 @@ export const tools: ToolDef[] = [
         expires_at: {
           type: 'string',
           description:
-            'Optional. When this memory stops applying, e.g. the day after a dated event. ISO date (YYYY-MM-DD) or date and time; a date means through the end of that day everywhere. Future only, at most 2 years.',
+            'Optional. The last day this applies, as a date (YYYY-MM-DD; kept through the end of that day everywhere) or a datetime. Future only, at most 2 years.',
         },
       },
       required: ['type', 'scope', 'body'],
@@ -85,7 +85,7 @@ export const tools: ToolDef[] = [
         expires_at: {
           type: ['string', 'null'],
           description:
-            'Optional. When this memory stops applying, e.g. the day after a dated event. ISO date (YYYY-MM-DD) or date and time; a date means through the end of that day everywhere. Future only, at most 2 years. null clears it; leave it out to keep the current one.',
+            'Optional. The last day this applies, as a date (YYYY-MM-DD; kept through the end of that day everywhere) or a datetime. Future only, at most 2 years. null clears it; leave it out to keep the current one.',
         },
       },
       required: ['id'],
