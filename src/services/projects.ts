@@ -16,6 +16,10 @@
 //     GET    /v1/projects/:projectId/tasks/:id    — get
 //     PATCH  /v1/projects/:projectId/tasks/:id    — update
 //     DELETE /v1/projects/:projectId/tasks/:id    — delete
+//   -- ClaudeCode 2026-11-17 (subtree reads):
+//     GET    /v1/tasks                            — tasks across every project the caller can see
+//                                                   (include_subtree, depth, status, assignee, due_before,
+//                                                   due_after, include_subtasks, limit, offset)
 //   Members (humans by email, agents by tenant UUID):
 //     POST   /v1/projects/:projectId/members      — add
 //     PATCH  /v1/projects/:projectId/members/:id  — role + active flag
@@ -28,7 +32,8 @@ import { call, okText } from '../client.js';
 export const tools: ToolDef[] = [
   {
     name: 'lsp_projects_list',
-    description: "List projects the caller has access to.",
+    description:
+      "List projects the caller has access to. Default = your own account only. Pass include_subtree=true to also list projects in your sub-accounts (each row carries source {tenant_id, tenant_name}); depth sets how far down (default 1). A person on their Spaces account may only use depth 1 (their own Spaces); admins may go deeper or 'all'.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -36,6 +41,9 @@ export const tools: ToolDef[] = [
         offset: { type: 'number' },
         status: { type: 'string' },
         include_deleted: { type: 'boolean' },
+        // -- ClaudeCode 2026-11-17 (subtree reads)
+        include_subtree: { type: 'boolean', description: 'Also include projects in sub-accounts. Every such read is logged.' },
+        depth: { type: 'string', description: "Levels below your account when include_subtree=true: a positive integer or 'all'. Default 1." },
       },
     },
   },
@@ -79,6 +87,28 @@ export const tools: ToolDef[] = [
         include_deleted: { type: 'boolean' },
       },
       required: ['project_id'],
+    },
+  },
+  // -- ClaudeCode 2026-11-17 (subtree reads): a separate tool rather than making project_id optional
+  // on lsp_projects_task_list — that tool's contract is "always project-scoped" and every MCP tool
+  // here maps to one Projects route; this one maps to GET /v1/tasks.
+  {
+    name: 'lsp_projects_tasks_across',
+    description:
+      "List tasks across ALL projects you can see, without naming a project — e.g. 'what's open across my Spaces', 'everything due this week'. Default = projects in your own account. Pass include_subtree=true to include sub-accounts (depth default 1 = direct sub-accounts; a person on their Spaces account may only use 1, admins may go deeper or 'all'). Each task carries source {tenant_id, tenant_name, project_id, project_name}. Root tasks only unless include_subtasks=true. Read-only — to change a task use lsp_projects_task_update with source.project_id.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include_subtree: { type: 'boolean', description: 'Also include projects in sub-accounts. Every such read is logged.' },
+        depth: { type: 'string', description: "Levels below your account when include_subtree=true: a positive integer or 'all'. Default 1." },
+        status: { type: 'string', description: "Exact status value, e.g. 'open'." },
+        assignee: { type: 'string' },
+        due_before: { type: 'string', description: 'ISO date/time; tasks due strictly before it.' },
+        due_after: { type: 'string', description: 'ISO date/time; tasks due at or after it.' },
+        include_subtasks: { type: 'boolean' },
+        limit: { type: 'number', description: 'Default 50, max 200.' },
+        offset: { type: 'number' },
+      },
     },
   },
   {
@@ -317,6 +347,11 @@ export const handlers: Record<string, ToolHandler> = {
     const { project_id, ...rest } = args as Record<string, unknown> & { project_id: string };
     const q = qs(rest);
     return okText(await call('projects', `/v1/projects/${project_id}/tasks${q}`, 'GET'));
+  },
+  // -- ClaudeCode 2026-11-17 (subtree reads): GET /v1/tasks across projects.
+  lsp_projects_tasks_across: async (args) => {
+    const q = qs((args ?? {}) as Record<string, unknown>);
+    return okText(await call('projects', `/v1/tasks${q}`, 'GET'));
   },
   lsp_projects_task_create: async (args) => {
     const { project_id, ...body } = args as Record<string, unknown> & { project_id: string };

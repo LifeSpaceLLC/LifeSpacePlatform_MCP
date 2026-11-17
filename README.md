@@ -16,7 +16,7 @@ Stdio MCP server wrapping live LifeSpace Platform services as first-class tools 
 > **`lsp_keys_link`** — when a script, CLI or program you launch needs a secret, use this instead of `lsp_keys_get`: it returns a single-use link (default 5 min, max 10) + field names + bash/python usage, so the value never enters the conversation. `lsp_keys_get` puts the value in the transcript.
 | Memory | `lsp_memory_add`, `lsp_memory_search`, `lsp_memory_update`, `lsp_memory_forget`, `lsp_memory_session_load` | Live |
 | Knowledge | `lsp_knowledge_write`, `lsp_knowledge_read`, `lsp_knowledge_search`, `lsp_knowledge_list` | Live |
-| Projects | `lsp_projects_task_create`, `lsp_projects_task_list`, `lsp_projects_task_update`, `lsp_projects_list` | Live |
+| Projects | `lsp_projects_task_create`, `lsp_projects_task_list`, `lsp_projects_task_update`, `lsp_projects_list`, `lsp_projects_tasks_across` | Live |
 | Library | `lsp_library_search`, `lsp_library_register`, `lsp_library_list_folders` | Live |
 | Tenant | `lsp_tenant_list`, `lsp_tenant_briefing_create`, `lsp_tenant_briefing_list`, `lsp_tenant_briefing_revoke` | Live |
 | Trust | `lsp_trust_whoami` | Live |
