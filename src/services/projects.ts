@@ -33,7 +33,7 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_projects_list',
     description:
-      "List projects the caller has access to. Default = your own account only. Pass include_subtree=true to also list projects in your sub-accounts (each row carries source {tenant_id, tenant_name}); depth sets how far down (default 1). A person on their Spaces account may only use depth 1 (their own Spaces); admins may go deeper or 'all'.",
+      "List projects the caller has access to. Default = your own account only. Pass include_subtree=true to also list projects in your sub-accounts (each row carries source {tenant_id, tenant_name}); depth sets how far down. A person on their Spaces account gets (and may only use) depth 1 = their own Spaces; admins get all levels when depth is omitted, or may pass a number.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -43,7 +43,7 @@ export const tools: ToolDef[] = [
         include_deleted: { type: 'boolean' },
         // -- ClaudeCode 2026-11-17 (subtree reads)
         include_subtree: { type: 'boolean', description: 'Also include projects in sub-accounts. Every such read is logged.' },
-        depth: { type: 'string', description: "Levels below your account when include_subtree=true: a positive integer or 'all'. Default 1." },
+        depth: { type: 'string', description: "Levels below your account when include_subtree=true: a positive integer or 'all'. When omitted: 1 for a person on their Spaces account (the only depth they may use); admins get all levels." },
       },
     },
   },
@@ -95,12 +95,12 @@ export const tools: ToolDef[] = [
   {
     name: 'lsp_projects_tasks_across',
     description:
-      "List tasks across ALL projects you can see, without naming a project — e.g. 'what's open across my Spaces', 'everything due this week'. Default = projects in your own account. Pass include_subtree=true to include sub-accounts (depth default 1 = direct sub-accounts; a person on their Spaces account may only use 1, admins may go deeper or 'all'). Each task carries source {tenant_id, tenant_name, project_id, project_name}. Root tasks only unless include_subtasks=true. Read-only — to change a task use lsp_projects_task_update with source.project_id.",
+      "List tasks across ALL projects you can see, without naming a project — e.g. 'what's open across my Spaces', 'everything due this week'. Default = projects in your own account. Pass include_subtree=true to include sub-accounts (a person on their Spaces account gets depth 1 = their own Spaces, the only depth they may use; admins get all levels when depth is omitted, or may pass a number). Each task carries source {tenant_id, tenant_name, project_id, project_name}. Root tasks only unless include_subtasks=true. Read-only — to change a task use lsp_projects_task_update with source.project_id.",
     inputSchema: {
       type: 'object',
       properties: {
         include_subtree: { type: 'boolean', description: 'Also include projects in sub-accounts. Every such read is logged.' },
-        depth: { type: 'string', description: "Levels below your account when include_subtree=true: a positive integer or 'all'. Default 1." },
+        depth: { type: 'string', description: "Levels below your account when include_subtree=true: a positive integer or 'all'. When omitted: 1 for a person on their Spaces account (the only depth they may use); admins get all levels." },
         status: { type: 'string', description: "Exact status value, e.g. 'open'." },
         assignee: { type: 'string' },
         due_before: { type: 'string', description: 'ISO date/time; tasks due strictly before it.' },
