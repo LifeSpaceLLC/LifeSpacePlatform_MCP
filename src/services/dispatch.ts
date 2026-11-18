@@ -1,4 +1,5 @@
 // -- ClaudeCode: Dispatch MCP tools. Wraps POST /v1/send, GET /v1/messages, GET /v1/credits/balance.
+// -- ClaudeCode 2026-11-18 (phone post): + POST /v1/inbox/post (lsp_dispatch_phone_post).
 import type { ToolDef, ToolHandler } from '../types.js';
 import { call, okText, errText } from '../client.js';
 
@@ -29,6 +30,11 @@ const DISPATCH_SEND_KEYS = new Set([
 // mapped into `config` before the call (Dispatch reads them from there). An
 // explicit top-level value WINS over the same key nested in config (deterministic).
 const DISPATCH_EMAIL_PROMOTED = ['subject', 'fromEmail', 'fromName', 'replyTo'] as const;
+
+// -- ClaudeCode 2026-11-18 (phone post): the ONLY valid top-level props for lsp_dispatch_phone_post.
+// They are exactly the body Dispatch POST /v1/inbox/post accepts (it refuses any other field too).
+// There is deliberately no recipient: Dispatch always posts to the email on the caller's own token.
+const PHONE_POST_KEYS = new Set(['space_tenant_id', 'title', 'lines', 'full_text', 'urgency', 'idempotency_key']);
 
 export const tools: ToolDef[] = [
   {
@@ -126,6 +132,37 @@ export const tools: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // -- ClaudeCode 2026-11-18 (phone post)
+  {
+    name: 'lsp_dispatch_phone_post',
+    description:
+      "Post one item to YOUR OWN phone (the LifeSpace phone app inbox of the person signed in to this connection), inside one of your Spaces, shown with that Space as the sender. It never sends to anyone else: there is no recipient, it always goes to you. Use it to hand yourself a finding, a result or a heads-up. urgency 'normal' (the default) shows quietly in the inbox; 'urgent' also sends a push to your phone. idempotency_key is required: re-running with the same key posts nothing new and returns the first post's ids. At most 20 posts a day per Space (Pacific day); the 21st is refused until midnight Pacific. The Space must be one of yours that you have a seat in.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_tenant_id: { type: 'string', description: 'The tenant id (uuid) of the Space to post in. It must be one of your own Spaces.' },
+        title: { type: 'string', description: 'The headline shown in the inbox (up to 200 characters).' },
+        lines: {
+          type: 'array',
+          items: { type: 'string' },
+          maxItems: 3,
+          description: 'Up to 3 short lines under the title (up to 140 characters each).',
+        },
+        full_text: { type: 'string', description: 'The full text shown when the item is opened. Omit it and the title and lines are used.' },
+        urgency: {
+          type: 'string',
+          enum: ['normal', 'urgent'],
+          description: "'normal' (default) = quiet, inbox only. 'urgent' = also a push to your phone.",
+        },
+        idempotency_key: {
+          type: 'string',
+          description: 'Required. Any unique string for this post (1 to 200 characters). Re-using it with the same content posts nothing new; with different content it is refused.',
+        },
+      },
+      required: ['space_tenant_id', 'title', 'idempotency_key'],
+      additionalProperties: false,
+    },
+  },
   {
     name: 'lsp_dispatch_list_messages',
     description:
@@ -198,6 +235,24 @@ export const handlers: Record<string, ToolHandler> = {
     const payload: Record<string, unknown> = { ...top };
     if (Object.keys(config).length) payload.config = config;
     return okText(await call('dispatch', '/v1/send', 'POST', payload));
+  },
+  // -- ClaudeCode 2026-11-18 (phone post): reject unknown top-level props loudly (a `recipient` included:
+  // there is none), then pass the args through as the body. call() sends the session's own Trust JWT and
+  // NO X-Tenant-Id header (none is passed in extraHeaders), so Dispatch scopes the Space by the token's
+  // own tenant.
+  lsp_dispatch_phone_post: async (args) => {
+    const a = (args ?? {}) as Record<string, unknown>;
+    const unknown = Object.keys(a).filter((k) => !PHONE_POST_KEYS.has(k));
+    if (unknown.length) {
+      return errText(
+        new Error(
+          `Unknown top-level propert${unknown.length > 1 ? 'ies' : 'y'} for lsp_dispatch_phone_post: ${unknown.join(', ')}. ` +
+            'Valid keys: space_tenant_id, title, lines, full_text, urgency, idempotency_key. ' +
+            'There is no recipient: a phone post always goes to your own phone.',
+        ),
+      );
+    }
+    return okText(await call('dispatch', '/v1/inbox/post', 'POST', a));
   },
   lsp_dispatch_list_messages: async (args) => {
     const limit = (args as { limit?: number } | undefined)?.limit;
