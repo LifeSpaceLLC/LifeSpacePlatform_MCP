@@ -9,7 +9,7 @@ Stdio MCP server wrapping live LifeSpace Platform services as first-class tools 
 
 | Service | Tools | Status |
 |---------|-------|--------|
-| Dispatch | `lsp_dispatch_send`, `lsp_dispatch_list_messages`, `lsp_dispatch_get_message`, `lsp_dispatch_credits_balance` | Live |
+| Dispatch | `lsp_dispatch_send`, `lsp_dispatch_phone_post` (to your own phone, in one of your Spaces; ClaudeCode 2026-11-18), `lsp_dispatch_list_messages`, `lsp_dispatch_get_message`, `lsp_dispatch_credits_balance` | Live |
 | Keys | `lsp_keys_get`, `lsp_keys_link`, `lsp_keys_list`, `lsp_keys_providers_list` | Live |
 
 <!-- ClaudeCode 2026-10-02 11:35 AM PDT -->
